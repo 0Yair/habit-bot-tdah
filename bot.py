@@ -19,7 +19,7 @@ import json
 import asyncio
 from datetime import datetime, date
 from dotenv import load_dotenv
-from supabase import create_client
+from postgrest import SyncPostgrestClient
 import anthropic
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (

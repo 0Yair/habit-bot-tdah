@@ -325,6 +325,112 @@ def handle_callback(update):
     time.sleep(1.5)
     ask_next_habit()
 
+# ══════════════════════════════════════════════════════════════════════════════
+# PERSONAS — Agenda inteligente de contactos
+# ══════════════════════════════════════════════════════════════════════════════
+
+def save_person(raw_input):
+    extracted = ai_call(f"""Extrae información de esta nota sobre una persona.
+Responde SOLO con JSON válido, sin explicación ni markdown.
+Formato exacto:
+{{"name": "Nombre Apellido", "birthday": "YYYY-MM-DD o null", "interests": ["interés1", "interés2"], "notes": "resumen de todo lo demás"}}
+Texto: {raw_input}""", 300)
+    try:
+        clean = extracted.strip().replace("```json", "").replace("```", "").strip()
+        data = json.loads(clean)
+        data["raw_input"] = raw_input
+        data["updated_at"] = datetime.now().isoformat()
+        existing = sb_get("people_notes", f"name_search=eq.{data['name'].lower()}&select=id")
+        if existing:
+            sb_patch("people_notes", f"id=eq.{existing[0]['id']}", data)
+            return f"✅ Actualicé la info de *{data['name']}*."
+        else:
+            sb_post("people_notes", data)
+            return f"✅ Guardé a *{data['name']}* en tu agenda."
+    except Exception as e:
+        print(f"Error guardando persona: {e}", flush=True)
+        return "❌ No pude procesar esa info. Intenta de nuevo."
+
+def get_person(name):
+    results = sb_get("people_notes", f"name_search=like.*{name.lower()}*&select=*")
+    return results[0] if results else None
+
+def ai_person_summary(person):
+    return ai_call(f"""Eres Hábit, asistente personal de Yair. Español mexicano, cálido y directo.
+Resume lo que Yair sabe de esta persona de forma útil y natural:
+Nombre: {person.get('name')}
+Cumpleaños: {person.get('birthday') or 'desconocido'}
+Intereses: {', '.join(person.get('interests') or []) or 'no registrados'}
+Notas: {person.get('notes') or 'sin notas'}
+Sé conversacional. Si hay cumpleaños próximo (dentro de 30 días), menciónalo. Máximo 5 líneas.""", 300)
+
+def ai_person_suggestions(person, context=""):
+    return ai_call(f"""Eres Hábit, coach personal de Yair. Español mexicano, práctico y creativo.
+Da 3-5 sugerencias concretas para conectar con {person.get('name')}.
+Puede ser: qué regalarle, qué tema tocar, qué hacer juntos.
+Intereses: {', '.join(person.get('interests') or []) or 'no registrados'}
+Cumpleaños: {person.get('birthday') or 'desconocido'}
+Notas: {person.get('notes') or 'sin notas'}
+{f'Contexto: {context}' if context else ''}
+Sé específico y creativo. Máximo 6 líneas.""", 400)
+
+def handle_persona_command(text):
+    parts = text.strip().split(" ", 2)
+    if len(parts) < 2:
+        return ("📋 *Comandos de personas:*\n\n"
+                "`/persona add Angélica — le gustan los perros, cumpleaños 30 oct`\n"
+                "`/persona info Angélica`\n"
+                "`/persona suggest Angélica`\n"
+                "`/persona list`")
+    subcmd = parts[1].lower()
+    if subcmd == "add":
+        if len(parts) < 3:
+            return "Escribe así: `/persona add Nombre — lo que sabes de ella`"
+        return save_person(parts[2])
+    elif subcmd == "info":
+        if len(parts) < 3:
+            return "Escribe así: `/persona info Nombre`"
+        person = get_person(parts[2])
+        if not person:
+            return "No encontré a nadie con ese nombre. ¿Ya lo guardaste con `/persona add`?"
+        summary = ai_person_summary(person)
+        bday_str = ""
+        if person.get("birthday"):
+            try:
+                bd = date.fromisoformat(person["birthday"])
+                today = date.today()
+                next_bd = bd.replace(year=today.year)
+                if next_bd < today:
+                    next_bd = bd.replace(year=today.year + 1)
+                days_left = (next_bd - today).days
+                if days_left <= 30:
+                    bday_str = f"\n\n🎂 *Su cumpleaños es en {days_left} días* ({bd.strftime('%d de %B')})"
+            except:
+                pass
+        return f"👤 *{person['name']}*\n\n{summary}{bday_str}"
+    elif subcmd == "suggest":
+        if len(parts) < 3:
+            return "Escribe así: `/persona suggest Nombre`"
+        name_ctx = parts[2].split("—", 1)
+        name = name_ctx[0].strip()
+        ctx = name_ctx[1].strip() if len(name_ctx) > 1 else ""
+        person = get_person(name)
+        if not person:
+            return f"No encontré a *{name}*. ¿Ya lo guardaste con `/persona add`?"
+        suggestions = ai_person_suggestions(person, ctx)
+        return f"💡 *Sugerencias para {person['name']}:*\n\n{suggestions}"
+    elif subcmd == "list":
+        people = sb_get("people_notes", "select=name,birthday&order=name")
+        if not people:
+            return "Aún no tienes personas guardadas. Usa `/persona add` para agregar."
+        lines = ["📋 *Tu agenda de personas:*\n"]
+        for p in people:
+            bday = f" 🎂 {p['birthday']}" if p.get('birthday') else ""
+            lines.append(f"• {p['name']}{bday}")
+        return "\n".join(lines)
+    else:
+        return "Subcomando no reconocido. Escribe `/persona` para ver opciones."
+
 def handle_message(update):
     msg = update.get("message", {})
     text = msg.get("text", "")
@@ -368,47 +474,34 @@ def handle_message(update):
                 f"   Racha: {h.get('streak',0)}d | Mejor: {h.get('best_streak',0)}d | Nivel: {h.get('current_week',1)}/6"
             )
         send_message("\n".join(lines))
+    elif text.startswith("/persona"):
+        answer = handle_persona_command(text)
+        send_message(answer)
     elif not text.startswith("/"):
         all_state = get_all_state()
         answer = ai_answer_question(text, all_state)
         send_message(answer)
 
 def main():
-    print("🤖 Hábit bot iniciando...", flush=True)
-    
-    # Test Telegram
-    try:
-        r = requests.get(f"{BASE_URL}/getMe")
-        print(f"✅ Telegram OK: {r.json()}", flush=True)
-    except Exception as e:
-        print(f"❌ Telegram ERROR: {e}", flush=True)
-    
-    # Test Supabase
-    try:
-        data = get_habits()
-        print(f"✅ Supabase OK: {len(data)} hábitos", flush=True)
-    except Exception as e:
-        print(f"❌ Supabase ERROR: {e}", flush=True)
-
-    # Scheduler
+    print("🤖 Hábit bot iniciando...")
+    # Scheduler en hilo separado
     t = threading.Thread(target=scheduler_loop, daemon=True)
     t.start()
 
     offset = None
-    print("✅ Esperando mensajes...", flush=True)
+    print("✅ Bot corriendo. Esperando mensajes...")
 
     while True:
         try:
             updates = get_updates(offset)
             for update in updates:
                 offset = update["update_id"] + 1
-                print(f"📨 Update recibido: {update}", flush=True)
                 if "callback_query" in update:
                     handle_callback(update)
                 elif "message" in update:
                     handle_message(update)
         except Exception as e:
-            print(f"❌ Loop ERROR: {e}", flush=True)
+            print(f"Error: {e}")
             time.sleep(5)
 
 if __name__ == "__main__":

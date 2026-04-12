@@ -509,20 +509,37 @@ def main():
     t = threading.Thread(target=scheduler_loop, daemon=True)
     t.start()
 
+    # Limpiar updates viejos al arrancar para evitar duplicados
     offset = None
-    print("✅ Bot corriendo. Esperando mensajes...")
+    try:
+        old = get_updates(None)
+        if old:
+            offset = old[-1]["update_id"] + 1
+            print(f"🧹 Limpiando {len(old)} updates viejos", flush=True)
+    except:
+        pass
+
+    print("✅ Bot corriendo. Esperando mensajes...", flush=True)
+    processed = set()
 
     while True:
         try:
             updates = get_updates(offset)
             for update in updates:
-                offset = update["update_id"] + 1
+                uid = update["update_id"]
+                offset = uid + 1
+                if uid in processed:
+                    continue
+                processed.add(uid)
+                if len(processed) > 200:
+                    processed = set(list(processed)[-100:])
                 if "callback_query" in update:
                     handle_callback(update)
                 elif "message" in update:
+                    requests.post(f"{BASE_URL}/sendChatAction", json={"chat_id": CHAT_ID, "action": "typing"})
                     handle_message(update)
         except Exception as e:
-            print(f"Error: {e}")
+            print(f"Error: {e}", flush=True)
             time.sleep(5)
 
 if __name__ == "__main__":

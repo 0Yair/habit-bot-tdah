@@ -230,6 +230,10 @@ def send_menu():
             [
                 {"text": "🔍 Consultar persona", "callback_data": "menu_lookup_person"},
                 {"text": "📊 Ver mi progreso", "callback_data": "menu_resumen"},
+            ],
+            [
+                {"text": "💸 Registrar gasto", "callback_data": "menu_gasto"},
+                {"text": "📈 Gastos del mes", "callback_data": "menu_gastos_mes"},
             ]
         ]
     }
@@ -294,6 +298,11 @@ def scheduler_loop():
         now = datetime.now()
         h, m = now.hour, now.minute
 
+        # Análisis financiero mensual: día 1 de cada mes a las 9 AM
+        elif h == 9 and m == 0 and now.day == 1:
+            send_monthly_finance_analysis()
+            time.sleep(61)
+
         # Menú de buenos días: 7:30 AM
         if h == 7 and m == 30:
             send_menu()
@@ -328,6 +337,29 @@ def scheduler_loop():
                         {"text": "❌ Aún no", "callback_data": "skip_cama"}
                     ]]}
                 )
+            time.sleep(61)
+
+        # Check-in ejercicio: 9:00 PM todos los días
+        elif h == 21 and m == 0:
+            habits = get_habits("night")
+            ejercicio = next((hb for hb in habits if hb["key"] == "ejercicio"), None)
+            if ejercicio:
+                all_state = get_all_state()
+                msg = ai_checkin_message(ejercicio, all_state)
+                keyboard = {"inline_keyboard": [[
+                    {"text": "✅ Sí", "callback_data": "done_ejercicio"},
+                    {"text": "❌ No", "callback_data": "skip_ejercicio"}
+                ]]}
+                session["pending"] = [ejercicio]
+                session["results"] = {}
+                session["block"] = "night"
+                send_message(msg, keyboard)
+                session["waiting"] = True
+            time.sleep(61)
+
+        # Análisis semanal: domingos 8:00 PM
+        elif h == 20 and m == 0 and now.weekday() == 6:
+            send_weekly_analysis()
             time.sleep(61)
 
         # Check-in comida: 10:00 PM
@@ -388,9 +420,51 @@ def handle_callback(update):
             send_message("👤 Escríbeme así:\n\n`/persona add Nombre — lo que sabes de esa persona`\n\nEjemplo:\n`/persona add Angélica Albarrán — le gustan los perros, cumpleaños 30 octubre`")
         elif data == "menu_lookup_person":
             send_message("🔍 Escríbeme así:\n\n`/persona info Nombre` — para ver lo que sabes\n`/persona suggest Nombre` — para ideas de cómo conectar\n`/persona list` — para ver todos tus contactos")
+        elif data == "menu_gastos_mes":
+            handle_gastos_resumen()
+        elif data == "menu_gasto":
+            send_message(
+                "💸 *Registrar gasto*\n\nTienes 3 formas:\n\n"
+                "📸 *Foto del ticket* — mándame la foto directo\n"
+                "`/gasto 250 comida_fuera BBVA_Gold Tacos el Güero` — manual\n"
+                "`/gastos` — ver resumen del mes"
+            )
+        elif data.startswith("gasto_confirm_"):
+            # Confirmar gasto extraído de foto
+            expense_json = data[14:]
+            try:
+                exp = json.loads(expense_json)
+                save_expense(exp)
+                send_message(f"✅ Guardado: *{exp['description']}* — ${abs(exp['amount']):.0f} en {exp['card']}")
+            except:
+                send_message("❌ Error guardando el gasto.")
+        elif data.startswith("gasto_cat_"):
+            # Cambiar categoría del gasto pendiente
+            parts = data[10:].split("_", 1)
+            if len(parts) == 2 and "pending_expense" in session:
+                session["pending_expense"]["category"] = parts[0] + "_" + parts[1] if len(parts) > 1 else parts[0]
+                exp = session["pending_expense"]
+                save_expense(exp)
+                send_message(f"✅ Guardado como *{exp['category']}*: {exp['description']} — ${abs(exp['amount']):.0f}")
+                session.pop("pending_expense", None)
+        elif data.startswith("exp_card_"):
+            card = data[9:]
+            if "pending_expense" in session:
+                session["pending_expense"]["card"] = card
+                exp = session["pending_expense"]
+                save_expense(exp)
+                cat_label = CATS_FINANCE.get(exp.get("category", "otro"), "📌 Otro")
+                card_label = CARDS_FINANCE.get(card, card)
+                send_message(
+                    f"✅ *Guardado en tu tracker*\n\n"
+                    f"💰 ${abs(exp.get('amount', 0)):.0f} — {exp.get('description', '')}\n"
+                    f"📂 {cat_label} · {card_label}\n\n"
+                    f"_Visible en mi-tracker-xi.vercel.app_"
+                )
+                session.pop("pending_expense", None)
+            else:
+                send_message("❌ No hay gasto pendiente. Manda la foto de nuevo.")
         return
-
-    if not data.startswith(("done_", "skip_", "partial_")):
         return
 
     if data.startswith("done_"):
@@ -573,6 +647,13 @@ def handle_message(update):
                 f"   Racha: {h.get('streak',0)}d | Mejor: {h.get('best_streak',0)}d | Nivel: {h.get('current_week',1)}/6"
             )
         send_message("\n".join(lines))
+    elif text == "/gastos":
+        handle_gastos_resumen()
+    elif text.startswith("/gasto"):
+        handle_gasto_command(text)
+    elif text == "/semanal":
+        send_message("📊 Generando tu análisis semanal...")
+        send_weekly_analysis()
     elif text.startswith("/persona"):
         answer = handle_persona_command(text)
         send_message(answer)
@@ -581,7 +662,272 @@ def handle_message(update):
         answer = ai_answer_question(text, all_state)
         send_message(answer)
 
-def main():
+# ══════════════════════════════════════════════════════════════════════════════
+# MÓDULO FINANZAS — Registro de gastos desde Telegram
+# Conectado a la misma tabla expenses de mi-tracker-xi.vercel.app
+# ══════════════════════════════════════════════════════════════════════════════
+
+CATS_FINANCE = {
+    "renta": "🏠 Renta",
+    "comida_super": "🛒 Súper",
+    "comida_fuera": "🍽️ Comida fuera",
+    "transporte": "🚗 Transporte",
+    "entretenimiento": "🎬 Entretenimiento",
+    "servicios": "💡 Servicios",
+    "salud": "💊 Salud",
+    "educacion": "📚 Educación",
+    "subscripciones": "📱 Subscripciones",
+    "movilidad": "🛵 Movilidad",
+    "ahorros_transfer": "🏦 Ahorro",
+    "otro": "📌 Otro",
+}
+
+CARDS_FINANCE = {
+    "BBVA_Gold": "BBVA Gold",
+    "HSBC_Volaris": "HSBC Volaris",
+    "BBVA_Debito": "BBVA Débito",
+    "Efectivo": "Efectivo",
+}
+
+def save_expense(exp: dict):
+    """Guarda un gasto en la tabla expenses de Supabase (misma que el tracker web)."""
+    row = {
+        "date": exp.get("date", date.today().isoformat()),
+        "amount": -abs(float(exp.get("amount", 0))),  # siempre negativo para gastos
+        "description": exp.get("description", ""),
+        "category": exp.get("category", "otro"),
+        "card": exp.get("card", "BBVA_Gold"),
+        "notes": exp.get("notes", "Registrado desde Telegram"),
+        "reconciled": "pendiente",
+    }
+    sb_post("expenses", row)
+
+
+def ai_extract_expense_from_photo(image_base64: str) -> dict:
+    """Usa Claude Vision para extraer datos del ticket."""
+    r = requests.post(
+        "https://api.anthropic.com/v1/messages",
+        headers={
+            "x-api-key": ANTHROPIC_KEY,
+            "anthropic-version": "2023-06-01",
+            "content-type": "application/json"
+        },
+        json={
+            "model": "claude-haiku-4-5-20251001",
+            "max_tokens": 400,
+            "messages": [{
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": "image/jpeg",
+                            "data": image_base64
+                        }
+                    },
+                    {
+                        "type": "text",
+                        "text": """Analiza este ticket/recibo y extrae la información.
+Responde SOLO con JSON válido, sin markdown:
+{"amount": número_positivo, "description": "nombre del comercio o descripción breve", "category": "una de: renta/comida_super/comida_fuera/transporte/entretenimiento/servicios/salud/educacion/subscripciones/movilidad/ahorros_transfer/otro", "date": "YYYY-MM-DD o null si no se ve"}
+
+Si no puedes leer el ticket, responde: {"error": "no_readable"}"""
+                    }
+                ]
+            }]
+        }
+    )
+    text = r.json()["content"][0]["text"]
+    clean = text.strip().replace("```json", "").replace("```", "").strip()
+    return json.loads(clean)
+
+
+def handle_photo(update: dict):
+    """Procesa foto de ticket enviada por el usuario."""
+    msg = update.get("message", {})
+    photos = msg.get("photo", [])
+    if not photos:
+        return
+
+    # Tomar la foto de mejor calidad
+    best_photo = max(photos, key=lambda p: p.get("file_size", 0))
+    file_id = best_photo["file_id"]
+
+    send_message("📸 Leyendo tu ticket...")
+
+    # Descargar la foto
+    try:
+        file_r = requests.get(f"{BASE_URL}/getFile", params={"file_id": file_id})
+        file_path = file_r.json()["result"]["file_path"]
+        img_r = requests.get(f"https://api.telegram.org/file/bot{TOKEN}/{file_path}")
+        image_base64 = __import__("base64").b64encode(img_r.content).decode()
+
+        expense = ai_extract_expense_from_photo(image_base64)
+
+        if "error" in expense:
+            send_message("❌ No pude leer el ticket. Intenta con mejor iluminación o regístralo manual:\n`/gasto 250 comida_fuera BBVA_Gold Descripción`")
+            return
+
+        # Guardar fecha de hoy si no se detectó
+        if not expense.get("date"):
+            expense["date"] = date.today().isoformat()
+
+        # Guardar en sesión para confirmación
+        session["pending_expense"] = expense
+
+        cat_label = CATS_FINANCE.get(expense.get("category", "otro"), "📌 Otro")
+        amount = abs(expense.get("amount", 0))
+
+        # Pedir tarjeta y confirmación
+        keyboard = {
+            "inline_keyboard": [
+                [
+                    {"text": "BBVA Gold", "callback_data": f"exp_card_BBVA_Gold"},
+                    {"text": "HSBC Volaris", "callback_data": f"exp_card_HSBC_Volaris"},
+                ],
+                [
+                    {"text": "BBVA Débito", "callback_data": f"exp_card_BBVA_Debito"},
+                    {"text": "Efectivo", "callback_data": f"exp_card_Efectivo"},
+                ]
+            ]
+        }
+        send_message(
+            f"🧾 *Ticket detectado*\n\n"
+            f"💰 *${amount:.0f}* — {expense.get('description', '')}\n"
+            f"📂 Categoría: {cat_label}\n"
+            f"📅 {expense.get('date', date.today().isoformat())}\n\n"
+            f"¿En qué tarjeta lo cargo?",
+            keyboard
+        )
+
+    except Exception as e:
+        print(f"Error procesando foto: {e}", flush=True)
+        send_message("❌ Error procesando el ticket. Intenta de nuevo o usa `/gasto` manual.")
+
+
+def handle_gasto_command(text: str):
+    """Procesa comando manual: /gasto 250 comida_fuera BBVA_Gold Descripción."""
+    parts = text.strip().split(" ", 4)
+    # /gasto amount category card description
+    if len(parts) < 3:
+        send_message(
+            "💸 *Registrar gasto manual*\n\n"
+            "`/gasto MONTO CATEGORÍA TARJETA Descripción`\n\n"
+            "Ejemplo:\n`/gasto 250 comida_fuera BBVA_Gold Tacos el Güero`\n\n"
+            "Categorías: `renta` `comida_super` `comida_fuera` `transporte` `entretenimiento` `servicios` `salud` `educacion` `subscripciones` `movilidad` `otro`\n\n"
+            "Tarjetas: `BBVA_Gold` `HSBC_Volaris` `BBVA_Debito` `Efectivo`"
+        )
+        return
+
+    try:
+        amount = float(parts[1])
+        category = parts[2] if len(parts) > 2 else "otro"
+        card = parts[3] if len(parts) > 3 else "BBVA_Gold"
+        description = parts[4] if len(parts) > 4 else "Gasto registrado"
+
+        exp = {
+            "amount": amount,
+            "category": category,
+            "card": card,
+            "description": description,
+            "date": date.today().isoformat(),
+        }
+        save_expense(exp)
+        cat_label = CATS_FINANCE.get(category, "📌 Otro")
+        card_label = CARDS_FINANCE.get(card, card)
+        send_message(f"✅ Guardado en tu tracker:\n\n💰 *${amount:.0f}* — {description}\n📂 {cat_label} · {card_label}")
+    except Exception as e:
+        send_message(f"❌ Error: {e}\nFormato: `/gasto 250 comida_fuera BBVA_Gold Descripción`")
+
+
+def handle_gastos_resumen():
+    """Muestra resumen de gastos del mes actual."""
+    from datetime import timedelta
+    today = date.today()
+    first_day = today.replace(day=1).isoformat()
+
+    expenses_raw = sb_get("expenses", f"date=gte.{first_day}&select=*&order=date.desc")
+
+    if not expenses_raw:
+        send_message("📊 Sin gastos registrados este mes.")
+        return
+
+    total = sum(abs(e.get("amount", 0)) for e in expenses_raw if e.get("amount", 0) < 0)
+    by_cat = {}
+    for e in expenses_raw:
+        if e.get("amount", 0) < 0:
+            cat = e.get("category", "otro")
+            by_cat[cat] = by_cat.get(cat, 0) + abs(e.get("amount", 0))
+
+    lines = [f"📊 *Gastos de {today.strftime('%B %Y')}*\n"]
+    lines.append(f"💸 Total: *${total:,.0f} MXN*\n")
+
+    sorted_cats = sorted(by_cat.items(), key=lambda x: x[1], reverse=True)
+    for cat, amt in sorted_cats[:6]:
+        label = CATS_FINANCE.get(cat, cat)
+        pct = int(amt / total * 100) if total > 0 else 0
+        bar = "█" * (pct // 10) + "░" * (10 - pct // 10)
+        lines.append(f"{label}\n`{bar}` ${amt:,.0f} ({pct}%)")
+
+    lines.append(f"\n_{len(expenses_raw)} transacciones · Ver más en mi-tracker-xi.vercel.app_")
+    send_message("\n".join(lines))
+
+
+def ai_monthly_finance_analysis(expenses_month: list, incomes_month: list) -> str:
+    """Análisis financiero mensual con IA."""
+    total_gastos = sum(abs(e.get("amount", 0)) for e in expenses_month if e.get("amount", 0) < 0)
+    total_ingresos = sum(e.get("amount", 0) for e in incomes_month if e.get("amount", 0) > 0)
+    by_cat = {}
+    for e in expenses_month:
+        if e.get("amount", 0) < 0:
+            cat = e.get("category", "otro")
+            by_cat[cat] = by_cat.get(cat, 0) + abs(e.get("amount", 0))
+    top_cats = sorted(by_cat.items(), key=lambda x: x[1], reverse=True)[:3]
+    context = "\n".join([f"- {CATS_FINANCE.get(k,k)}: ${v:,.0f}" for k, v in top_cats])
+
+    return ai_call(f"""Eres Hábit, coach financiero personal de Yair. Español mexicano, directo y honesto.
+
+Resumen financiero del mes:
+Ingresos: ${total_ingresos:,.0f} MXN
+Gastos: ${total_gastos:,.0f} MXN
+Balance: ${total_ingresos - total_gastos:,.0f} MXN
+Top categorías de gasto:
+{context}
+
+Escribe un análisis mensual financiero (máx 8 líneas):
+1. Estado general del mes (directo, sin rodeos)
+2. Lo que más gastó y si tiene sentido
+3. Una observación inteligente sobre sus patrones
+4. Una acción concreta para el próximo mes
+Tono: como un CFO amigo que lo conoce. Sin frases genéricas.""", 400)
+
+
+def send_monthly_finance_analysis():
+    """Manda análisis financiero mensual — primer día del mes."""
+    today = date.today()
+    first_day = today.replace(day=1).isoformat()
+    from datetime import timedelta
+    last_month_last = (today.replace(day=1) - timedelta(days=1))
+    last_month_first = last_month_last.replace(day=1).isoformat()
+
+    expenses_month = sb_get("expenses", f"date=gte.{last_month_first}&date=lte.{last_month_last.isoformat()}&select=*")
+    incomes_month = sb_get("incomes", f"date=gte.{last_month_first}&date=lte.{last_month_last.isoformat()}&select=*")
+
+    if not expenses_month:
+        return
+
+    analysis = ai_monthly_finance_analysis(expenses_month, incomes_month)
+    total = sum(abs(e.get("amount", 0)) for e in expenses_month if e.get("amount", 0) < 0)
+
+    send_message(
+        f"💼 *Análisis financiero — {last_month_last.strftime('%B %Y')}*\n\n"
+        f"Total gastado: *${total:,.0f} MXN*\n\n"
+        f"{analysis}\n\n"
+        f"_Ver detalles en mi-tracker-xi.vercel.app_ 📊"
+    )
+
+
     print("🤖 Hábit bot iniciando...")
     # Scheduler en hilo separado
     t = threading.Thread(target=scheduler_loop, daemon=True)
@@ -614,11 +960,80 @@ def main():
                 if "callback_query" in update:
                     handle_callback(update)
                 elif "message" in update:
+                    msg = update.get("message", {})
                     requests.post(f"{BASE_URL}/sendChatAction", json={"chat_id": CHAT_ID, "action": "typing"})
-                    handle_message(update)
+                    if "photo" in msg:
+                        handle_photo(update)
+                    else:
+                        handle_message(update)
         except Exception as e:
             print(f"Error: {e}", flush=True)
             time.sleep(5)
 
 if __name__ == "__main__":
     main()
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ANÁLISIS SEMANAL — Domingos 8:00 PM
+# ══════════════════════════════════════════════════════════════════════════════
+
+def ai_weekly_analysis(logs_week: list, all_state: list) -> str:
+    """Genera un análisis semanal profundo con reencuadre motivacional."""
+    done_by_habit = {}
+    for h in all_state:
+        key = h.get("key")
+        done_count = sum(1 for l in logs_week if l.get("habit_key") == key and l.get("done"))
+        done_by_habit[h.get("name")] = done_count
+
+    context = "\n".join([f"- {name}: {count}/7 días" for name, count in done_by_habit.items()])
+    best = max(done_by_habit.items(), key=lambda x: x[1]) if done_by_habit else ("ninguno", 0)
+    worst = min(done_by_habit.items(), key=lambda x: x[1]) if done_by_habit else ("ninguno", 0)
+
+    return ai_call(f"""Eres Hábit, coach de hábitos para TDAH. Español mexicano, honesto, profundo y motivador.
+
+Es domingo — momento de análisis semanal de Yair (24 años, auditor en EY, construyendo su mejor versión).
+
+Resultados de la semana:
+{context}
+Mejor hábito: {best[0]} ({best[1]}/7)
+Hábito a reforzar: {worst[0]} ({worst[1]}/7)
+
+Escribe un análisis semanal con esta estructura (usa *negritas* para los títulos):
+1. *Esta semana fuiste:* — una frase que capture la esencia de su semana (honesto, no condescendiente)
+2. *Lo que construiste:* — qué logró en concreto, qué patrón se está formando
+3. *El porqué importa:* — recuérdale POR QUÉ está haciendo esto. Su meta de Manager, su salud, su identidad. Hazlo sentir el propósito.
+4. *La única cosa para esta semana:* — UN foco concreto para la semana que viene
+5. *Tu frase de la semana:* — una frase corta y poderosa que lo regrese a su centro cuando se distraiga
+
+Tono: como un mentor que lo conoce de verdad. Sin frases genéricas. Máximo 12 líneas.""", 500)
+
+
+def send_weekly_analysis():
+    """Manda el análisis semanal."""
+    from datetime import timedelta
+    today = date.today()
+    week_ago = (today - timedelta(days=7)).isoformat()
+
+    logs_week = sb_get("habit_logs", f"logged_at=gte.{week_ago}&select=*")
+    all_state = get_all_state()
+
+    analysis = ai_weekly_analysis(logs_week, all_state)
+
+    total_possible = len(all_state) * 7
+    total_done = sum(1 for l in logs_week if l.get("done"))
+    pct = round((total_done / total_possible * 100)) if total_possible > 0 else 0
+    filled = int(pct / 10)
+    bar = "█" * filled + "░" * (10 - filled)
+
+    send_message(
+        f"📅 *Análisis semanal*\n"
+        f"`{bar}` {pct}% completado\n\n"
+        f"{analysis}\n\n"
+        f"_Nueva semana, nuevo sprint. Tú decides quién eres. 🔥_"
+    )
+
+# PATCH — insertar antes de if __name__ == "__main__":
+
+# ══════════════════════════════════════════════════════════════════════════════
+# MÓDULO FINANZAS — Registro de gastos desde Telegram
+# ══════════════════════════════════════════════════════════════════════════════

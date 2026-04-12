@@ -211,6 +211,30 @@ Responde útil, específico y breve (máx 5 líneas).""", 400)
 # FLUJO DEL CHECK-IN
 # ══════════════════════════════════════════════════════════════════════════════
 
+def send_menu():
+    """Manda el menú principal con botones rápidos."""
+    hour = datetime.now().hour
+    if hour < 12:
+        greeting = "☀️ *Buenos días, Yair*"
+    elif hour < 19:
+        greeting = "🌤 *Buenas tardes, Yair*"
+    else:
+        greeting = "🌙 *Buenas noches, Yair*"
+
+    keyboard = {
+        "inline_keyboard": [
+            [
+                {"text": "📋 Check-in hábitos", "callback_data": "menu_checkin"},
+                {"text": "👤 Agregar persona", "callback_data": "menu_add_person"},
+            ],
+            [
+                {"text": "🔍 Consultar persona", "callback_data": "menu_lookup_person"},
+                {"text": "📊 Ver mi progreso", "callback_data": "menu_resumen"},
+            ]
+        ]
+    }
+    send_message(f"{greeting}\n¿Qué quieres hacer?", keyboard)
+
 def start_checkin(block):
     habits = get_habits(block)
     if not habits:
@@ -219,10 +243,6 @@ def start_checkin(block):
     session["pending"] = list(habits)
     session["results"] = {}
     session["waiting"] = False
-    label = "mañana" if block == "morning" else "noche"
-    emoji = "🌤" if block == "morning" else "🌙"
-    send_message(f"{emoji} *Check-in de {label}*\nVamos con tus {len(habits)} hábitos:")
-    time.sleep(1)
     ask_next_habit()
 
 def ask_next_habit():
@@ -273,21 +293,62 @@ def scheduler_loop():
     while True:
         now = datetime.now()
         h, m = now.hour, now.minute
-        # Check-in mañana: 9:00
-        if h == 9 and m == 0:
-            start_checkin("morning")
+
+        # Menú de buenos días: 7:30 AM
+        if h == 7 and m == 30:
+            send_menu()
             time.sleep(61)
-        # Recordatorio mañana: 10:30
-        elif h == 10 and m == 30:
+
+        # Check-in cama: 8:00 AM — mensaje disruptivo
+        elif h == 8 and m == 0:
+            habits = get_habits("morning")
+            cama = next((h for h in habits if h["key"] == "cama"), None)
+            if cama:
+                all_state = get_all_state()
+                msg = ai_checkin_message(cama, all_state)
+                keyboard = {"inline_keyboard": [[
+                    {"text": "✅ Sí", "callback_data": "done_cama"},
+                    {"text": "❌ No", "callback_data": "skip_cama"}
+                ]]}
+                session["pending"] = [cama]
+                session["results"] = {}
+                session["block"] = "morning"
+                send_message(msg, keyboard)
+                session["waiting"] = True
+            time.sleep(61)
+
+        # Recordatorio si no tendió cama: 9:00 AM
+        elif h == 9 and m == 0:
             all_state = get_all_state()
-            pending = [s for s in all_state if s.get("block") == "morning" and not s.get("done_today")]
-            if pending:
-                send_message(f"⏰ Aún tienes {len(pending)} hábitos matutinos pendientes. Escribe /checkin cuando puedas.")
+            cama = next((s for s in all_state if s.get("key") == "cama"), None)
+            if cama and not cama.get("done_today"):
+                send_message("👀 Oye, ¿ya tendiste la cama? Tu cerebro TDAH necesita esa victoria temprana para arrancar bien el día.",
+                    {"inline_keyboard": [[
+                        {"text": "✅ Ya la tendí", "callback_data": "done_cama"},
+                        {"text": "❌ Aún no", "callback_data": "skip_cama"}
+                    ]]}
+                )
             time.sleep(61)
-        # Check-in noche: 21:30
-        elif h == 21 and m == 30:
-            start_checkin("night")
+
+        # Check-in comida: 10:00 PM
+        elif h == 22 and m == 0:
+            habits = get_habits("night")
+            comida = next((h for h in habits if h["key"] == "comida"), None)
+            if comida:
+                all_state = get_all_state()
+                msg = ai_checkin_message(comida, all_state)
+                keyboard = {"inline_keyboard": [[
+                    {"text": "✅ Sí", "callback_data": "done_comida"},
+                    {"text": "〰️ Más o menos", "callback_data": "partial_comida"},
+                    {"text": "❌ No", "callback_data": "skip_comida"}
+                ]]}
+                session["pending"] = [comida]
+                session["results"] = {}
+                session["block"] = "night"
+                send_message(msg, keyboard)
+                session["waiting"] = True
             time.sleep(61)
+
         else:
             time.sleep(30)
 
@@ -304,6 +365,30 @@ def handle_callback(update):
     original_text = cb["message"].get("text", "")
 
     answer_callback(callback_id)
+
+    if data.startswith("menu_"):
+        answer_callback(callback_id)
+        if data == "menu_checkin":
+            hour = datetime.now().hour
+            block = "morning" if hour < 15 else "night"
+            start_checkin(block)
+        elif data == "menu_resumen":
+            all_state = get_all_state()
+            lines = ["📊 *Tu progreso de hoy*\n"]
+            for h in all_state:
+                icon = "✅" if h.get("done_today") else "⬜"
+                lines.append(f"{icon} {h.get('emoji','')} {h.get('name','')} — racha: {h.get('streak',0)}d")
+            done = sum(1 for h in all_state if h.get("done_today"))
+            total = len(all_state)
+            filled = int((done / total) * 10) if total > 0 else 0
+            bar = "█" * filled + "░" * (10 - filled)
+            lines.append(f"\n`{bar}` {done}/{total} completados")
+            send_message("\n".join(lines))
+        elif data == "menu_add_person":
+            send_message("👤 Escríbeme así:\n\n`/persona add Nombre — lo que sabes de esa persona`\n\nEjemplo:\n`/persona add Angélica Albarrán — le gustan los perros, cumpleaños 30 octubre`")
+        elif data == "menu_lookup_person":
+            send_message("🔍 Escríbeme así:\n\n`/persona info Nombre` — para ver lo que sabes\n`/persona suggest Nombre` — para ideas de cómo conectar\n`/persona list` — para ver todos tus contactos")
+        return
 
     if not data.startswith(("done_", "skip_", "partial_")):
         return
@@ -461,14 +546,7 @@ def handle_message(update):
         return
 
     if text == "/start":
-        send_message(
-            "👋 Hola Yair, soy *Hábit* — tu coach de hábitos con TDAH.\n\n"
-            "Comandos:\n"
-            "/checkin — check-in manual\n"
-            "/resumen — progreso de hoy\n"
-            "/racha — ver tus rachas\n\n"
-            "O escríbeme cualquier pregunta sobre tus hábitos."
-        )
+        send_menu()
     elif text == "/checkin":
         hour = datetime.now().hour
         block = "morning" if hour < 15 else "night"

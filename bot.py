@@ -233,12 +233,23 @@ def ask_next_habit():
     session["current"] = habit
     all_state = get_all_state()
     msg = ai_checkin_message(habit, all_state)
-    keyboard = {
-        "inline_keyboard": [[
-            {"text": "✅ Sí, lo hice", "callback_data": f"done_{habit['key']}"},
-            {"text": "❌ Hoy no", "callback_data": f"skip_{habit['key']}"}
-        ]]
-    }
+
+    # Comida tiene 3 opciones, el resto 2
+    if habit["key"] == "comida":
+        keyboard = {
+            "inline_keyboard": [[
+                {"text": "✅ Sí", "callback_data": f"done_{habit['key']}"},
+                {"text": "〰️ Más o menos", "callback_data": f"partial_{habit['key']}"},
+                {"text": "❌ No", "callback_data": f"skip_{habit['key']}"}
+            ]]
+        }
+    else:
+        keyboard = {
+            "inline_keyboard": [[
+                {"text": "✅ Sí", "callback_data": f"done_{habit['key']}"},
+                {"text": "❌ No", "callback_data": f"skip_{habit['key']}"}
+            ]]
+        }
     send_message(msg, keyboard)
     session["waiting"] = True
 
@@ -294,11 +305,21 @@ def handle_callback(update):
 
     answer_callback(callback_id)
 
-    if not data.startswith(("done_", "skip_")):
+    if not data.startswith(("done_", "skip_", "partial_")):
         return
 
-    action, habit_key = data.split("_", 1)
-    done = action == "done"
+    if data.startswith("done_"):
+        action, habit_key = "done", data[5:]
+        done = True
+        note = "sí"
+    elif data.startswith("partial_"):
+        action, habit_key = "partial", data[8:]
+        done = True
+        note = "más o menos"
+    else:
+        action, habit_key = "skip", data[5:]
+        done = False
+        note = "no"
 
     all_state = get_all_state()
     habit = next((h for h in all_state if h.get("key") == habit_key), None)
@@ -306,7 +327,7 @@ def handle_callback(update):
         return
 
     week_level = habit.get("current_week", 1)
-    log_habit(habit_key, done, week_level)
+    log_habit(habit_key, done, week_level, note)
     new_week = advance_week_if_needed(habit_key)
 
     session["results"][habit_key] = done

@@ -374,25 +374,41 @@ def handle_message(update):
         send_message(answer)
 
 def main():
-    print("🤖 Hábit bot iniciando...")
-    # Scheduler en hilo separado
+    print("🤖 Hábit bot iniciando...", flush=True)
+    
+    # Test Telegram
+    try:
+        r = requests.get(f"{BASE_URL}/getMe")
+        print(f"✅ Telegram OK: {r.json()}", flush=True)
+    except Exception as e:
+        print(f"❌ Telegram ERROR: {e}", flush=True)
+    
+    # Test Supabase
+    try:
+        data = get_habits()
+        print(f"✅ Supabase OK: {len(data)} hábitos", flush=True)
+    except Exception as e:
+        print(f"❌ Supabase ERROR: {e}", flush=True)
+
+    # Scheduler
     t = threading.Thread(target=scheduler_loop, daemon=True)
     t.start()
 
     offset = None
-    print("✅ Bot corriendo. Esperando mensajes...")
+    print("✅ Esperando mensajes...", flush=True)
 
     while True:
         try:
             updates = get_updates(offset)
             for update in updates:
                 offset = update["update_id"] + 1
+                print(f"📨 Update recibido: {update}", flush=True)
                 if "callback_query" in update:
                     handle_callback(update)
                 elif "message" in update:
                     handle_message(update)
         except Exception as e:
-            print(f"Error: {e}")
+            print(f"❌ Loop ERROR: {e}", flush=True)
             time.sleep(5)
 
 if __name__ == "__main__":

@@ -298,11 +298,6 @@ def scheduler_loop():
         now = datetime.now()
         h, m = now.hour, now.minute
 
-        # Análisis financiero mensual: día 1 de cada mes a las 9 AM
-        elif h == 9 and m == 0 and now.day == 1:
-            send_monthly_finance_analysis()
-            time.sleep(61)
-
         # Menú de buenos días: 7:30 AM
         if h == 7 and m == 30:
             send_menu()
@@ -360,6 +355,11 @@ def scheduler_loop():
         # Análisis semanal: domingos 8:00 PM
         elif h == 20 and m == 0 and now.weekday() == 6:
             send_weekly_analysis()
+            time.sleep(61)
+
+        # Análisis financiero mensual: día 1 de cada mes a las 9 AM
+        elif h == 9 and m == 0 and now.day == 1:
+            send_monthly_finance_analysis()
             time.sleep(61)
 
         # Check-in comida: 10:00 PM

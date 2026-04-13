@@ -970,9 +970,6 @@ def send_monthly_finance_analysis():
             print(f"Error: {e}", flush=True)
             time.sleep(5)
 
-if __name__ == "__main__":
-    main()
-
 # ══════════════════════════════════════════════════════════════════════════════
 # ANÁLISIS SEMANAL — Domingos 8:00 PM
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1032,8 +1029,62 @@ def send_weekly_analysis():
         f"_Nueva semana, nuevo sprint. Tú decides quién eres. 🔥_"
     )
 
-# PATCH — insertar antes de if __name__ == "__main__":
 
-# ══════════════════════════════════════════════════════════════════════════════
-# MÓDULO FINANZAS — Registro de gastos desde Telegram
-# ══════════════════════════════════════════════════════════════════════════════
+def main():
+    print("🤖 Hábit bot iniciando...", flush=True)
+
+    try:
+        r = requests.get(f"{BASE_URL}/getMe")
+        print(f"✅ Telegram OK: {r.json().get('result',{}).get('username','??')}", flush=True)
+    except Exception as e:
+        print(f"❌ Telegram ERROR: {e}", flush=True)
+
+    try:
+        data = get_habits()
+        print(f"✅ Supabase OK: {len(data)} hábitos", flush=True)
+    except Exception as e:
+        print(f"❌ Supabase ERROR: {e}", flush=True)
+
+    t = threading.Thread(target=scheduler_loop, daemon=True)
+    t.start()
+
+    # Limpiar updates viejos al arrancar para evitar duplicados
+    offset = None
+    try:
+        old = get_updates(None)
+        if old:
+            offset = old[-1]["update_id"] + 1
+            print(f"🧹 Limpiando {len(old)} updates viejos", flush=True)
+    except:
+        pass
+
+    print("✅ Bot corriendo. Esperando mensajes...", flush=True)
+    processed = set()
+
+    while True:
+        try:
+            updates = get_updates(offset)
+            for update in updates:
+                uid = update["update_id"]
+                offset = uid + 1
+                if uid in processed:
+                    continue
+                processed.add(uid)
+                if len(processed) > 200:
+                    processed = set(list(processed)[-100:])
+                if "callback_query" in update:
+                    handle_callback(update)
+                elif "message" in update:
+                    msg = update.get("message", {})
+                    requests.post(f"{BASE_URL}/sendChatAction", json={"chat_id": CHAT_ID, "action": "typing"})
+                    if "photo" in msg:
+                        handle_photo(update)
+                    else:
+                        handle_message(update)
+        except Exception as e:
+            print(f"Error: {e}", flush=True)
+            time.sleep(5)
+
+
+if __name__ == "__main__":
+    main()

@@ -13,6 +13,24 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 
 WEBHOOK_SECRET = "habitbot_webhook_2024_yair"
 
+def get_bbva_cycle(ref_date=None):
+    """Devuelve (cycle_start, cycle_end) del ciclo BBVA Gold activo para una fecha dada.
+    Ciclo: día 19 del mes anterior → día 18 del mes actual.
+    """
+    from datetime import timedelta
+    today = ref_date or date.today()
+    if today.day <= 18:
+        # Ciclo: 19 del mes anterior → 18 del mes actual
+        first = today.replace(day=1) - timedelta(days=1)  # último día mes anterior
+        cycle_start = first.replace(day=19)
+        cycle_end = today.replace(day=18)
+    else:
+        # Ciclo: 19 del mes actual → 18 del mes siguiente
+        cycle_start = today.replace(day=19)
+        next_month = (today.replace(day=28) + timedelta(days=4)).replace(day=18)
+        cycle_end = next_month
+    return cycle_start, cycle_end
+
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -851,11 +869,11 @@ def handle_gasto_command(text: str):
 
 
 def handle_gastos_resumen():
-    """Muestra resumen de gastos del mes actual."""
+    """Muestra resumen de gastos del ciclo actual BBVA Gold (19 → 18)."""
     today = date.today()
-    first_day = today.replace(day=1).isoformat()
+    cycle_start, cycle_end = get_bbva_cycle(today)
 
-    expenses_raw = sb_get("expenses", f"date=gte.{first_day}&select=*&order=date.desc")
+    expenses_raw = sb_get("expenses", f"date=gte.{cycle_start.isoformat()}&date=lte.{cycle_end.isoformat()}&select=*&order=date.desc")
 
     if not expenses_raw:
         send_message("📊 Sin gastos registrados este mes.")
@@ -884,7 +902,7 @@ def handle_gastos_resumen():
         cat = e.get("category", "otro")
         by_cat[cat] = by_cat.get(cat, 0) + abs(e.get("amount", 0))
 
-    lines = [f"📊 *Gastos de {today.strftime('%B %Y')}*\n"]
+    lines = [f"📊 *Gastos ciclo BBVA Gold*\n_{cycle_start.strftime('%d %b')} → {cycle_end.strftime('%d %b %Y')}_\n"]
     lines.append(f"💸 Total: *${total:,.0f} MXN*\n")
 
     sorted_cats = sorted(by_cat.items(), key=lambda x: x[1], reverse=True)
@@ -932,15 +950,15 @@ Tono: como un CFO amigo que lo conoce. Sin frases genéricas.""", 400)
 
 
 def send_monthly_finance_analysis():
-    """Manda análisis financiero mensual — primer día del mes."""
-    today = date.today()
-    first_day = today.replace(day=1).isoformat()
+    """Manda análisis financiero del ciclo BBVA Gold anterior (se corre día 19)."""
     from datetime import timedelta
-    last_month_last = (today.replace(day=1) - timedelta(days=1))
-    last_month_first = last_month_last.replace(day=1).isoformat()
+    today = date.today()
+    # Al correr el día 19, el ciclo que acaba de cerrar es el anterior
+    prev_cycle_end = today.replace(day=18) - timedelta(days=1) if today.day == 19 else today - timedelta(days=1)
+    cycle_start, cycle_end = get_bbva_cycle(prev_cycle_end)
 
-    expenses_month = sb_get("expenses", f"date=gte.{last_month_first}&date=lte.{last_month_last.isoformat()}&select=*")
-    incomes_month = sb_get("incomes", f"date=gte.{last_month_first}&date=lte.{last_month_last.isoformat()}&select=*")
+    expenses_month = sb_get("expenses", f"date=gte.{cycle_start.isoformat()}&date=lte.{cycle_end.isoformat()}&select=*")
+    incomes_month = sb_get("incomes", f"date=gte.{cycle_start.isoformat()}&date=lte.{cycle_end.isoformat()}&select=*")
 
     if not expenses_month:
         return
@@ -1074,8 +1092,8 @@ def check_smart_alerts():
         budgets_raw = sb_get("budgets", "id=eq.1&select=data")
         if budgets_raw and budgets_raw[0].get("data"):
             budgets = budgets_raw[0]["data"]
-            first_day = today.replace(day=1).isoformat()
-            expenses_month = sb_get("expenses", f"date=gte.{first_day}&select=category,amount")
+            cycle_start, cycle_end = get_bbva_cycle(today)
+            expenses_month = sb_get("expenses", f"date=gte.{cycle_start.isoformat()}&date=lte.{cycle_end.isoformat()}&select=category,amount")
             by_cat = {}
             for e in expenses_month:
                 if e.get("amount", 0) < 0:
@@ -1109,14 +1127,15 @@ def check_smart_alerts():
             alerts.append(f"💳 *{card_name}* — pago en {days_to_pago} días. ¡No olvides pagar!")
 
     try:
-        first_day = today.replace(day=1)
-        last_month_end = first_day - timedelta(days=1)
-        last_month_start = last_month_end.replace(day=1)
-        this_month_exp = sb_get("expenses", f"date=gte.{first_day.isoformat()}&select=amount")
-        last_month_exp = sb_get("expenses", f"date=gte.{last_month_start.isoformat()}&date=lte.{last_month_end.isoformat()}&select=amount")
+        from datetime import timedelta
+        cycle_start, cycle_end = get_bbva_cycle(today)
+        prev_cycle_end = cycle_start - timedelta(days=1)
+        prev_cycle_start, _ = get_bbva_cycle(prev_cycle_end)
+        this_month_exp = sb_get("expenses", f"date=gte.{cycle_start.isoformat()}&date=lte.{cycle_end.isoformat()}&select=amount")
+        last_month_exp = sb_get("expenses", f"date=gte.{prev_cycle_start.isoformat()}&date=lte.{prev_cycle_end.isoformat()}&select=amount")
         this_total = sum(abs(e["amount"]) for e in this_month_exp if e.get("amount", 0) < 0)
         last_total = sum(abs(e["amount"]) for e in last_month_exp if e.get("amount", 0) < 0)
-        days_elapsed = today.day
+        days_elapsed = (today - cycle_start).days + 1
         if last_total > 0 and days_elapsed > 5:
             projected = (this_total / days_elapsed) * 30
             if projected > last_total * 1.15:

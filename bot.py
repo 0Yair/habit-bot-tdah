@@ -852,7 +852,6 @@ def handle_gasto_command(text: str):
 
 def handle_gastos_resumen():
     """Muestra resumen de gastos del mes actual."""
-    from datetime import timedelta
     today = date.today()
     first_day = today.replace(day=1).isoformat()
 
@@ -862,12 +861,28 @@ def handle_gastos_resumen():
         send_message("📊 Sin gastos registrados este mes.")
         return
 
-    total = sum(abs(e.get("amount", 0)) for e in expenses_raw if e.get("amount", 0) < 0)
-    by_cat = {}
+    # Filtrar solo gastos reales (excluir ingresos/abonos)
+    # Los gastos pueden estar como negativos o positivos según cómo se registraron
+    gastos = []
     for e in expenses_raw:
-        if e.get("amount", 0) < 0:
-            cat = e.get("category", "otro")
-            by_cat[cat] = by_cat.get(cat, 0) + abs(e.get("amount", 0))
+        amt = e.get("amount", 0)
+        entry_type = e.get("entry_type", "gasto")
+        # Excluir ingresos y pagos de tarjeta
+        if entry_type in ("ingreso_nomina", "ingreso_otro", "pago_tarjeta"):
+            continue
+        # Incluir si tiene monto (positivo o negativo, ambos son gastos)
+        if amt != 0:
+            gastos.append(e)
+
+    if not gastos:
+        send_message("📊 Sin gastos registrados este mes.")
+        return
+
+    total = sum(abs(e.get("amount", 0)) for e in gastos)
+    by_cat = {}
+    for e in gastos:
+        cat = e.get("category", "otro")
+        by_cat[cat] = by_cat.get(cat, 0) + abs(e.get("amount", 0))
 
     lines = [f"📊 *Gastos de {today.strftime('%B %Y')}*\n"]
     lines.append(f"💸 Total: *${total:,.0f} MXN*\n")
@@ -879,19 +894,23 @@ def handle_gastos_resumen():
         bar = "█" * (pct // 10) + "░" * (10 - pct // 10)
         lines.append(f"{label}\n`{bar}` ${amt:,.0f} ({pct}%)")
 
-    lines.append(f"\n_{len(expenses_raw)} transacciones · Ver más en mi-tracker-xi.vercel.app_")
+    lines.append(f"\n_{len(gastos)} transacciones · Ver más en mi-tracker-xi.vercel.app_")
     send_message("\n".join(lines))
 
 
 def ai_monthly_finance_analysis(expenses_month: list, incomes_month: list) -> str:
     """Análisis financiero mensual con IA."""
-    total_gastos = sum(abs(e.get("amount", 0)) for e in expenses_month if e.get("amount", 0) < 0)
+    # Filtrar solo gastos reales (excluir ingresos/traspasos)
+    gastos_reales = [e for e in expenses_month
+                     if e.get("entry_type", "gasto") not in ("ingreso_nomina", "ingreso_otro", "pago_tarjeta")
+                     and e.get("amount", 0) != 0]
+
+    total_gastos = sum(abs(e.get("amount", 0)) for e in gastos_reales)
     total_ingresos = sum(e.get("amount", 0) for e in incomes_month if e.get("amount", 0) > 0)
     by_cat = {}
-    for e in expenses_month:
-        if e.get("amount", 0) < 0:
-            cat = e.get("category", "otro")
-            by_cat[cat] = by_cat.get(cat, 0) + abs(e.get("amount", 0))
+    for e in gastos_reales:
+        cat = e.get("category", "otro")
+        by_cat[cat] = by_cat.get(cat, 0) + abs(e.get("amount", 0))
     top_cats = sorted(by_cat.items(), key=lambda x: x[1], reverse=True)[:3]
     context = "\n".join([f"- {CATS_FINANCE.get(k,k)}: ${v:,.0f}" for k, v in top_cats])
 

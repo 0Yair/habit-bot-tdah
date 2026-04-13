@@ -9,6 +9,10 @@ import time
 import threading
 import requests
 from datetime import datetime, date
+from http.server import HTTPServer, BaseHTTPRequestHandler
+
+WEBHOOK_SECRET = "habitbot_webhook_2024_yair"
+
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -350,6 +354,11 @@ def scheduler_loop():
                 session["block"] = "night"
                 send_message(msg, keyboard)
                 session["waiting"] = True
+            time.sleep(61)
+
+        # Alertas inteligentes: 8:00 PM de lunes a sábado
+        elif h == 20 and m == 0 and now.weekday() != 6:
+            check_smart_alerts()
             time.sleep(61)
 
         # Análisis semanal: domingos 8:00 PM
@@ -933,6 +942,10 @@ def send_monthly_finance_analysis():
     t = threading.Thread(target=scheduler_loop, daemon=True)
     t.start()
 
+    # Webhook server
+    wt = threading.Thread(target=start_webhook_server, daemon=True)
+    wt.start()
+
     # Limpiar updates viejos al arrancar para evitar duplicados
     offset = None
     try:
@@ -1030,6 +1043,140 @@ def send_weekly_analysis():
     )
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# ALERTAS INTELIGENTES — Revisión diaria
+# ══════════════════════════════════════════════════════════════════════════════
+
+def check_smart_alerts():
+    from datetime import timedelta
+    today = date.today()
+    alerts = []
+    try:
+        budgets_raw = sb_get("budgets", "id=eq.1&select=data")
+        if budgets_raw and budgets_raw[0].get("data"):
+            budgets = budgets_raw[0]["data"]
+            first_day = today.replace(day=1).isoformat()
+            expenses_month = sb_get("expenses", f"date=gte.{first_day}&select=category,amount")
+            by_cat = {}
+            for e in expenses_month:
+                if e.get("amount", 0) < 0:
+                    cat = e.get("category", "otro")
+                    by_cat[cat] = by_cat.get(cat, 0) + abs(e["amount"])
+            for cat, spent in by_cat.items():
+                budget = budgets.get(cat, 0)
+                if budget > 0:
+                    pct = spent / budget * 100
+                    if pct >= 100:
+                        alerts.append(f"🚨 *{CATS_FINANCE.get(cat, cat)}* — presupuesto AGOTADO (${spent:,.0f} / ${budget:,.0f})")
+                    elif pct >= 80:
+                        alerts.append(f"⚠️ *{CATS_FINANCE.get(cat, cat)}* — {pct:.0f}% del presupuesto usado")
+    except Exception as e:
+        print(f"Error alertas presupuesto: {e}", flush=True)
+
+    card_cycles = {
+        "BBVA Gold": {"corte_dia": 18, "pago_dia": 7},
+        "HSBC Volaris": {"corte_dia": 9, "pago_dia": 28},
+    }
+    from datetime import timedelta
+    for card_name, cycle in card_cycles.items():
+        day = today.day
+        corte_dia = cycle["corte_dia"]
+        days_to_corte = corte_dia - day if day <= corte_dia else (today.replace(day=1) + timedelta(days=32)).replace(day=corte_dia).day - day + 30
+        pago_dia = cycle["pago_dia"]
+        days_to_pago = pago_dia - day if day <= pago_dia else (today.replace(day=1) + timedelta(days=32)).replace(day=pago_dia).day - day + 30
+        if 0 < days_to_corte <= 5:
+            alerts.append(f"📅 *{card_name}* — corte en {days_to_corte} días")
+        if 0 < days_to_pago <= 3:
+            alerts.append(f"💳 *{card_name}* — pago en {days_to_pago} días. ¡No olvides pagar!")
+
+    try:
+        first_day = today.replace(day=1)
+        last_month_end = first_day - timedelta(days=1)
+        last_month_start = last_month_end.replace(day=1)
+        this_month_exp = sb_get("expenses", f"date=gte.{first_day.isoformat()}&select=amount")
+        last_month_exp = sb_get("expenses", f"date=gte.{last_month_start.isoformat()}&date=lte.{last_month_end.isoformat()}&select=amount")
+        this_total = sum(abs(e["amount"]) for e in this_month_exp if e.get("amount", 0) < 0)
+        last_total = sum(abs(e["amount"]) for e in last_month_exp if e.get("amount", 0) < 0)
+        days_elapsed = today.day
+        if last_total > 0 and days_elapsed > 5:
+            projected = (this_total / days_elapsed) * 30
+            if projected > last_total * 1.15:
+                pct_over = ((projected - last_total) / last_total) * 100
+                alerts.append(f"📈 Vas *{pct_over:.0f}% más arriba* que el mes pasado en gasto. Proyección: ${projected:,.0f}")
+    except Exception as e:
+        print(f"Error alertas overspending: {e}", flush=True)
+
+    try:
+        all_state = get_all_state()
+        for h in all_state:
+            if h.get("streak", 0) == 0:
+                logs = sb_get("habit_logs", f"habit_key=eq.{h['key']}&done=eq.false&select=logged_at&order=logged_at.desc&limit=5")
+                if len(logs) >= 3:
+                    alerts.append(f"💤 *{h.get('emoji','')} {h.get('name','')}* — {len(logs)}+ días sin completarlo")
+    except Exception as e:
+        print(f"Error alertas hábitos: {e}", flush=True)
+
+    if alerts:
+        send_message("🔔 *Alertas del día*\n\n" + "\n".join(alerts) + "\n\n_Revisa mi-tracker-xi.vercel.app_")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# WEBHOOKS — Recibe eventos de Supabase y la web
+# ══════════════════════════════════════════════════════════════════════════════
+
+class WebhookHandler(BaseHTTPRequestHandler):
+    def log_message(self, format, *args): pass
+
+    def do_POST(self):
+        if self.path != "/webhook/supabase":
+            self.send_response(404); self.end_headers(); return
+        content_length = int(self.headers.get("Content-Length", 0))
+        body = self.rfile.read(content_length)
+        auth = self.headers.get("Authorization", "")
+        if auth != f"Bearer {WEBHOOK_SECRET}":
+            self.send_response(401); self.end_headers(); return
+        self.send_response(200); self.end_headers()
+        threading.Thread(target=process_webhook, args=(body,), daemon=True).start()
+
+    def do_GET(self):
+        if self.path == "/health":
+            self.send_response(200); self.end_headers(); self.wfile.write(b"OK")
+        else:
+            self.send_response(404); self.end_headers()
+
+
+def process_webhook(body: bytes):
+    try:
+        data = json.loads(body)
+        table = data.get("table", "")
+        record = data.get("record", {})
+        event_type = data.get("type", "")
+        if table == "expenses" and event_type == "INSERT":
+            notes = record.get("notes", "")
+            if "Telegram" not in notes:
+                amount = abs(record.get("amount", 0))
+                cat = CATS_FINANCE.get(record.get("category", "otro"), "📌 Otro")
+                card = CARDS_FINANCE.get(record.get("card", ""), record.get("card", ""))
+                send_message(f"💸 Gasto registrado desde la web:\n*${amount:,.0f}* — {record.get('description', '')}\n{cat} · {card}")
+        elif table == "debts" and event_type == "INSERT":
+            send_message(f"📋 Nueva deuda desde la web:\n*{record.get('name','Deuda')}* — ${record.get('amount',0):,.0f}")
+        elif table == "incomes" and event_type == "INSERT":
+            amount = record.get("amount", 0)
+            tipo = record.get("type", "otro")
+            if tipo == "sueldo":
+                send_message(f"💼 ¡Ingresó tu quincena! *${amount:,.0f} MXN*\n_¿Ya separaste el ahorro?_")
+            elif tipo == "extraordinario":
+                send_message(f"🎁 Ingreso extraordinario: *${amount:,.0f} MXN*")
+    except Exception as e:
+        print(f"Error webhook: {e}", flush=True)
+
+
+def start_webhook_server():
+    server = HTTPServer(("0.0.0.0", 8080), WebhookHandler)
+    print("🌐 Webhook server en puerto 8080", flush=True)
+    server.serve_forever()
+
+
 def main():
     print("🤖 Hábit bot iniciando...", flush=True)
 
@@ -1047,6 +1194,10 @@ def main():
 
     t = threading.Thread(target=scheduler_loop, daemon=True)
     t.start()
+
+    # Webhook server
+    wt = threading.Thread(target=start_webhook_server, daemon=True)
+    wt.start()
 
     # Limpiar updates viejos al arrancar para evitar duplicados
     offset = None

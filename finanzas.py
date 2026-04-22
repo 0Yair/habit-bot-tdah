@@ -163,8 +163,14 @@ def handle_photo(update: dict):
             send_message("❌ No pude leer el ticket. Usa:\n`/gasto 250 comida_fuera BBVA_Gold Descripción`")
             return
 
-        if not expense.get("date"):
-            expense["date"] = date.today().isoformat()
+        # Usar fecha de hoy si el ticket no tiene fecha o la fecha es de más de 30 días atrás
+        today = date.today()
+        try:
+            exp_date = date.fromisoformat(expense["date"]) if expense.get("date") else None
+            if not exp_date or (today - exp_date).days > 30:
+                expense["date"] = today.isoformat()
+        except Exception:
+            expense["date"] = today.isoformat()
 
         session["pending_expense"] = expense
         cat_label = CATS_FINANCE.get(expense.get("category", "otro"), "📌 Otro")

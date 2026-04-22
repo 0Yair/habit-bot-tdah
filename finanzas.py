@@ -41,25 +41,74 @@ def get_bbva_cycle(ref_date=None):
 # ── Guardar gasto ─────────────────────────────────────────────────────────────
 def save_expense(exp: dict) -> bool:
     """Inserta en la tabla expenses. Retorna True si OK, False si error."""
-    # ID igual al patrón del tracker: timestamp ms + random
-    unique_id = int(time.time() * 1000) + random.randint(0, 999)
-    row = {
-        "id":          unique_id,
-        "date":        exp.get("date", date.today().isoformat()),
-        "amount":      -abs(float(exp.get("amount", 0))),
-        "description": exp.get("description", ""),
-        "category":    exp.get("category", "otro"),
-        "card":        exp.get("card", "BBVA_Gold"),
-        "notes":       exp.get("notes", "Registrado desde Telegram"),
-        "reconciled":  "pendiente",
-    }
-    result = sb_post("expenses", row)
-    # Supabase devuelve lista en éxito, dict con 'code' en error
-    if isinstance(result, dict) and result.get("code"):
-        print(f"[save_expense ERROR] {result}", flush=True)
+    try:
+        unique_id = int(time.time() * 1000) + random.randint(0, 999)
+        row = {
+            "id":          unique_id,
+            "date":        exp.get("date", date.today().isoformat()),
+            "amount":      -abs(float(exp.get("amount", 0))),
+            "description": exp.get("description", ""),
+            "category":    exp.get("category", "otro"),
+            "card":        exp.get("card", "BBVA_Gold"),
+            "notes":       exp.get("notes", "Registrado desde Telegram"),
+            "reconciled":  "pendiente",
+        }
+        result = sb_post("expenses", row)
+        # Supabase devuelve lista en éxito, dict con 'code'/'message' en error
+        if isinstance(result, dict) and (result.get("code") or result.get("message")):
+            print(f"[save_expense ERROR] {result}", flush=True)
+            return False
+        if isinstance(result, list):
+            print(f"[save_expense OK] id={unique_id} desc={row['description']}", flush=True)
+            return True
+        # Respuesta inesperada
+        print(f"[save_expense UNKNOWN] {result}", flush=True)
         return False
-    print(f"[save_expense OK] id={unique_id} desc={row['description']}", flush=True)
-    return True
+    except Exception as e:
+        print(f"[save_expense EXCEPTION] {e}", flush=True)
+        return False
+
+def test_supabase_connection() -> str:
+    """Prueba insertar y luego leer de expenses. Retorna diagnóstico."""
+    from shared import SUPABASE_URL, SUPABASE_KEY, sb_get
+    import requests as req
+    lines = [f"🔌 URL: `{SUPABASE_URL}`\n"]
+
+    # 1. Intentar leer
+    try:
+        data = sb_get("expenses", "select=id,date,amount&limit=1&order=id.desc")
+        if isinstance(data, list):
+            lines.append(f"✅ READ OK — {len(data)} fila(s) obtenida(s)")
+        else:
+            lines.append(f"❌ READ ERROR — {data}")
+    except Exception as e:
+        lines.append(f"❌ READ EXCEPTION — {e}")
+
+    # 2. Intentar insertar fila de prueba
+    try:
+        test_id = int(time.time() * 1000) + 1
+        row = {
+            "id": test_id,
+            "date": date.today().isoformat(),
+            "amount": -1.0,
+            "description": "TEST_BOT_DELETE_ME",
+            "category": "otro",
+            "card": "BBVA_Gold",
+            "notes": "Test diagnóstico",
+            "reconciled": "pendiente",
+        }
+        from shared import sb_headers, SUPABASE_URL
+        r = req.post(
+            f"{SUPABASE_URL}/rest/v1/expenses",
+            headers=sb_headers(),
+            json=row
+        )
+        lines.append(f"\n✅ INSERT HTTP {r.status_code}" if r.ok else f"\n❌ INSERT HTTP {r.status_code}")
+        lines.append(f"`{r.text[:300]}`")
+    except Exception as e:
+        lines.append(f"\n❌ INSERT EXCEPTION — {e}")
+
+    return "\n".join(lines)
 
 # ── Foto de ticket ────────────────────────────────────────────────────────────
 def ai_extract_expense_from_photo(image_base64: str) -> dict:

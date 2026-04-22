@@ -10,10 +10,17 @@ load_dotenv()
 
 TOKEN        = os.environ["TELEGRAM_TOKEN"]
 CHAT_ID      = os.environ["TELEGRAM_CHAT_ID"]
-SUPABASE_URL = os.environ["SUPABASE_URL"]
-SUPABASE_KEY = os.environ["SUPABASE_KEY"]
 ANTHROPIC_KEY= os.environ["ANTHROPIC_API_KEY"]
-BASE_URL     = f"https://api.telegram.org/bot{TOKEN}"
+
+# Supabase — fallback a las credenciales del tracker si el .env no las tiene
+SUPABASE_URL = os.environ.get("SUPABASE_URL", "https://gdosrvuhsnwpcdikzrck.supabase.co")
+SUPABASE_KEY = os.environ.get(
+    "SUPABASE_KEY",
+    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imdkb3NydnVoc253cGNkaWt6cmNrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ0NTEzMDEsImV4cCI6MjA5MDAyNzMwMX0.iUh_Q6H7ubDgfG7cVEdBq24eFmWkGS8zsuPYp1wMC-g"
+)
+
+BASE_URL = f"https://api.telegram.org/bot{TOKEN}"
+print(f"[Config] Supabase URL: {SUPABASE_URL}", flush=True)
 
 # Estado en memoria compartido entre módulos
 session = {
@@ -39,6 +46,7 @@ def sb_get(table, params=""):
 
 def sb_post(table, data):
     r = requests.post(f"{SUPABASE_URL}/rest/v1/{table}", headers=sb_headers(), json=data)
+    print(f"[sb_post] {table} → HTTP {r.status_code} | {r.text[:200]}", flush=True)
     return r.json()
 
 def sb_patch(table, params, data):

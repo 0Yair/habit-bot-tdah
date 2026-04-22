@@ -19,6 +19,7 @@ from habitos import (
 from finanzas import (
     handle_photo, handle_gasto_command, handle_gastos_resumen,
     handle_finance_callback, send_monthly_finance_analysis,
+    test_supabase_connection,
 )
 from asistente import handle_persona_command, ai_answer_question
 
@@ -101,6 +102,10 @@ def handle_message(update):
         send_weekly_analysis()
     elif text.startswith("/persona"):
         send_message(handle_persona_command(text))
+    elif text == "/test_gasto":
+        send_message("🔍 Diagnosticando conexión Supabase...")
+        resultado = test_supabase_connection()
+        send_message(resultado)
     elif not text.startswith("/"):
         all_state = get_all_state()
         send_message(ai_answer_question(text, all_state))

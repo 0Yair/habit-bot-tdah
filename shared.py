@@ -8,9 +8,16 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-TOKEN        = os.environ["TELEGRAM_TOKEN"]
-CHAT_ID      = os.environ["TELEGRAM_CHAT_ID"]
-ANTHROPIC_KEY= os.environ["ANTHROPIC_API_KEY"]
+def _require(key):
+    val = os.environ.get(key)
+    if not val:
+        print(f"[ERROR] Variable de entorno '{key}' no encontrada. Agrega un archivo .env", flush=True)
+        raise SystemExit(f"Falta variable: {key}")
+    return val
+
+TOKEN         = _require("TELEGRAM_TOKEN")
+CHAT_ID       = _require("TELEGRAM_CHAT_ID")
+ANTHROPIC_KEY = _require("ANTHROPIC_API_KEY")
 
 # Supabase — fallback a las credenciales del tracker si el .env no las tiene
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "https://gdosrvuhsnwpcdikzrck.supabase.co")
@@ -20,7 +27,7 @@ SUPABASE_KEY = os.environ.get(
 )
 
 BASE_URL = f"https://api.telegram.org/bot{TOKEN}"
-print(f"[Config] Supabase URL: {SUPABASE_URL}", flush=True)
+print(f"[Config] OK — Supabase: {SUPABASE_URL}", flush=True)
 
 # Estado en memoria compartido entre módulos
 session = {

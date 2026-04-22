@@ -456,42 +456,46 @@ def handle_callback(update):
                 "`/gasto 250 comida_fuera BBVA_Gold Tacos el Güero` — manual\n"
                 "`/gastos` — ver resumen del mes"
             )
-        elif data.startswith("gasto_confirm_"):
-            # Confirmar gasto extraído de foto
-            expense_json = data[14:]
-            try:
-                exp = json.loads(expense_json)
-                save_expense(exp)
-                send_message(f"✅ Guardado: *{exp['description']}* — ${abs(exp['amount']):.0f} en {exp['card']}")
-            except:
-                send_message("❌ Error guardando el gasto.")
-        elif data.startswith("gasto_cat_"):
-            # Cambiar categoría del gasto pendiente
-            parts = data[10:].split("_", 1)
-            if len(parts) == 2 and "pending_expense" in session:
-                session["pending_expense"]["category"] = parts[0] + "_" + parts[1] if len(parts) > 1 else parts[0]
-                exp = session["pending_expense"]
-                save_expense(exp)
-                send_message(f"✅ Guardado como *{exp['category']}*: {exp['description']} — ${abs(exp['amount']):.0f}")
-                session.pop("pending_expense", None)
-        elif data.startswith("exp_card_"):
-            card = data[9:]
-            if "pending_expense" in session:
-                session["pending_expense"]["card"] = card
-                exp = session["pending_expense"]
-                save_expense(exp)
-                cat_label = CATS_FINANCE.get(exp.get("category", "otro"), "📌 Otro")
-                card_label = CARDS_FINANCE.get(card, card)
-                send_message(
-                    f"✅ *Guardado en tu tracker*\n\n"
-                    f"💰 ${abs(exp.get('amount', 0)):.0f} — {exp.get('description', '')}\n"
-                    f"📂 {cat_label} · {card_label}\n\n"
-                    f"_Visible en mi-tracker-xi.vercel.app_"
-                )
-                session.pop("pending_expense", None)
-            else:
-                send_message("❌ No hay gasto pendiente. Manda la foto de nuevo.")
         return
+
+    # ── Confirmar / categorizar gasto desde foto ────────────────────────────
+    if data.startswith("gasto_confirm_"):
+        expense_json = data[14:]
+        try:
+            exp = json.loads(expense_json)
+            save_expense(exp)
+            send_message(f"✅ Guardado: *{exp['description']}* — ${abs(exp['amount']):.0f} en {exp['card']}")
+        except:
+            send_message("❌ Error guardando el gasto.")
+        return
+
+    if data.startswith("gasto_cat_"):
+        parts = data[10:].split("_", 1)
+        if len(parts) == 2 and "pending_expense" in session:
+            session["pending_expense"]["category"] = parts[0] + "_" + parts[1] if len(parts) > 1 else parts[0]
+            exp = session["pending_expense"]
+            save_expense(exp)
+            send_message(f"✅ Guardado como *{exp['category']}*: {exp['description']} — ${abs(exp['amount']):.0f}")
+            session.pop("pending_expense", None)
+        return
+
+    if data.startswith("exp_card_"):
+        card = data[9:]
+        if "pending_expense" in session:
+            session["pending_expense"]["card"] = card
+            exp = session["pending_expense"]
+            save_expense(exp)
+            cat_label = CATS_FINANCE.get(exp.get("category", "otro"), "📌 Otro")
+            card_label = CARDS_FINANCE.get(card, card)
+            send_message(
+                f"✅ *Guardado en tu tracker*\n\n"
+                f"💰 ${abs(exp.get('amount', 0)):.0f} — {exp.get('description', '')}\n"
+                f"📂 {cat_label} · {card_label}\n\n"
+                f"_Visible en mi-tracker-xi.vercel.app_"
+            )
+            session.pop("pending_expense", None)
+        else:
+            send_message("❌ No hay gasto pendiente. Manda la foto de nuevo.")
         return
 
     if data.startswith("done_"):

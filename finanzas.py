@@ -1,7 +1,7 @@
 """
 FINANZAS — Registro de gastos, tickets, resúmenes y análisis mensual.
 """
-import json
+import json, time, random
 from datetime import datetime, date, timedelta
 from shared import session, sb_get, sb_post, send_message, ai_call
 
@@ -39,8 +39,12 @@ def get_bbva_cycle(ref_date=None):
         return cycle_start, next_month
 
 # ── Guardar gasto ─────────────────────────────────────────────────────────────
-def save_expense(exp: dict):
-    sb_post("expenses", {
+def save_expense(exp: dict) -> bool:
+    """Inserta en la tabla expenses. Retorna True si OK, False si error."""
+    # ID igual al patrón del tracker: timestamp ms + random
+    unique_id = int(time.time() * 1000) + random.randint(0, 999)
+    row = {
+        "id":          unique_id,
         "date":        exp.get("date", date.today().isoformat()),
         "amount":      -abs(float(exp.get("amount", 0))),
         "description": exp.get("description", ""),
@@ -48,7 +52,14 @@ def save_expense(exp: dict):
         "card":        exp.get("card", "BBVA_Gold"),
         "notes":       exp.get("notes", "Registrado desde Telegram"),
         "reconciled":  "pendiente",
-    })
+    }
+    result = sb_post("expenses", row)
+    # Supabase devuelve lista en éxito, dict con 'code' en error
+    if isinstance(result, dict) and result.get("code"):
+        print(f"[save_expense ERROR] {result}", flush=True)
+        return False
+    print(f"[save_expense OK] id={unique_id} desc={row['description']}", flush=True)
+    return True
 
 # ── Foto de ticket ────────────────────────────────────────────────────────────
 def ai_extract_expense_from_photo(image_base64: str) -> dict:
@@ -140,11 +151,14 @@ def handle_gasto_command(text: str):
         category    = parts[2] if len(parts) > 2 else "otro"
         card        = parts[3] if len(parts) > 3 else "BBVA_Gold"
         description = parts[4] if len(parts) > 4 else "Gasto registrado"
-        save_expense({"amount": amount, "category": category, "card": card, "description": description})
-        send_message(
-            f"✅ *${amount:.0f}* — {description}\n"
-            f"{CATS_FINANCE.get(category,'📌 Otro')} · {CARDS_FINANCE.get(card, card)}"
-        )
+        ok = save_expense({"amount": amount, "category": category, "card": card, "description": description})
+        if ok:
+            send_message(
+                f"✅ *${amount:.0f}* — {description}\n"
+                f"{CATS_FINANCE.get(category,'📌 Otro')} · {CARDS_FINANCE.get(card, card)}"
+            )
+        else:
+            send_message("❌ Error al guardar en Supabase. Revisa los logs.")
     except Exception as e:
         send_message(f"❌ {e}\nFormato: `/gasto 250 comida_fuera BBVA_Gold Descripción`")
 
@@ -181,13 +195,15 @@ def handle_finance_callback(data) -> bool:
         if "pending_expense" in session:
             session["pending_expense"]["card"] = card
             exp = session["pending_expense"]
-            save_expense(exp)
-            send_message(
-                f"✅ *${abs(exp.get('amount',0)):.0f}* — {exp.get('description','')}\n"
-                f"{CATS_FINANCE.get(exp.get('category','otro'),'📌 Otro')} · {CARDS_FINANCE.get(card, card)}\n"
-                f"_mi-tracker-xi.vercel.app_"
-            )
-            session.pop("pending_expense", None)
+            if save_expense(exp):
+                send_message(
+                    f"✅ *${abs(exp.get('amount',0)):.0f}* — {exp.get('description','')}\n"
+                    f"{CATS_FINANCE.get(exp.get('category','otro'),'📌 Otro')} · {CARDS_FINANCE.get(card, card)}\n"
+                    f"_mi-tracker-xi.vercel.app_"
+                )
+                session.pop("pending_expense", None)
+            else:
+                send_message("❌ Error al guardar en Supabase. Revisa los logs.")
         else:
             send_message("❌ No hay gasto pendiente. Manda la foto de nuevo.")
         return True
@@ -195,9 +211,12 @@ def handle_finance_callback(data) -> bool:
     if data.startswith("gasto_confirm_"):
         try:
             exp = __import__("json").loads(data[14:])
-            save_expense(exp)
-            send_message(f"✅ *{exp['description']}* — ${abs(exp['amount']):.0f} en {exp['card']}")
-        except:
+            if save_expense(exp):
+                send_message(f"✅ *{exp['description']}* — ${abs(exp['amount']):.0f} en {exp['card']}")
+            else:
+                send_message("❌ Error guardando el gasto.")
+        except Exception as e:
+            print(f"[gasto_confirm error] {e}", flush=True)
             send_message("❌ Error guardando el gasto.")
         return True
 
@@ -206,9 +225,11 @@ def handle_finance_callback(data) -> bool:
         if len(parts) == 2 and "pending_expense" in session:
             session["pending_expense"]["category"] = "_".join(parts)
             exp = session["pending_expense"]
-            save_expense(exp)
-            send_message(f"✅ Guardado como *{exp['category']}*: {exp['description']} — ${abs(exp['amount']):.0f}")
-            session.pop("pending_expense", None)
+            if save_expense(exp):
+                send_message(f"✅ Guardado como *{exp['category']}*: {exp['description']} — ${abs(exp['amount']):.0f}")
+                session.pop("pending_expense", None)
+            else:
+                send_message("❌ Error guardando el gasto.")
         return True
 
     return False

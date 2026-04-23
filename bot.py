@@ -23,6 +23,11 @@ from finanzas import (
     send_finance_submenu, handle_finance_query,
 )
 from asistente import handle_persona_command, ai_answer_question
+from comida import (
+    send_meal_reminder, handle_meal_callback,
+    handle_meal_setup_callback, handle_meal_setup_text,
+    show_today_plan,
+)
 
 # ── Instancia única (evita duplicados cuando corre más de un proceso) ──────────
 def _ensure_single_instance():
@@ -79,7 +84,7 @@ _CB = {
     "hab_nuevo":         start_new_habit_flow,
     "hab_recordatorios": show_reminders_menu,
     "hab_semanal":       send_weekly_analysis,
-    "hab_plan_comida":   lambda: send_message("🥗 Plan alimenticio — próximamente."),
+    "hab_plan_comida":   show_today_plan,
 }
 
 # ── Dispatch de comandos de texto ─────────────────────────────────────────────
@@ -106,17 +111,24 @@ def handle_callback(update):
     if session.get("flow") in ("new_habit", "set_reminder"):
         if handle_habit_flow_callback(data):
             return
+    if session.get("flow") == "meal_plan_setup" or data.startswith("msetup_"):
+        if handle_meal_setup_callback(data):
+            return
 
-    # 2. Respuestas de check-in (done_, skip_, partial_) — también desde recordatorios
+    # 2. Respuestas a recordatorios de comida (meal_si_, meal_parcial_, meal_no_)
+    if handle_meal_callback(data):
+        return
+
+    # 3. Respuestas de check-in de hábitos (done_, skip_, partial_)
     if handle_habit_callback(data, chat_id, message_id, original):
         return
 
-    # 3. Dispatch estático
+    # 4. Dispatch estático
     if data in _CB:
         _CB[data]()
         return
 
-    # 4. Callbacks con lógica extra
+    # 5. Callbacks con lógica extra
     if data == "hab_checkin":
         start_checkin("morning" if now_mx().hour < 15 else "night")
         return
@@ -126,7 +138,7 @@ def handle_callback(update):
         send_message("💬 ¿Qué quieres saber de tus gastos?\nEj: ¿cuánto gasté en comida este ciclo?")
         return
 
-    # 5. Finanzas: ticket foto y confirmaciones
+    # 6. Finanzas: ticket foto y confirmaciones
     handle_finance_callback(data)
 
 # ── Mensajes de texto ──────────────────────────────────────────────────────────
@@ -146,6 +158,9 @@ def handle_message(update):
         return
     if flow in ("new_habit", "set_reminder"):
         handle_habit_flow_text(text)
+        return
+    if flow == "meal_plan_setup":
+        handle_meal_setup_text(text)
         return
 
     # Comandos del dict
@@ -201,7 +216,9 @@ def scheduler_loop():
             # acciones puedan dispararse en el mismo minuto.
             if h == 7  and m == 30: send_menu()
 
-            if h == 8  and m == 0:  _trigger("cama", "morning")
+            if h == 8  and m == 0:
+                _trigger("cama", "morning")
+                send_meal_reminder("desayuno")
 
             if h == 9  and m == 0:
                 s = next((x for x in get_all_state() if x.get("key") == "cama"), None)
@@ -213,8 +230,12 @@ def scheduler_loop():
                 if now.day == 19:
                     send_monthly_finance_analysis()
 
+            if h == 14 and m == 0:  send_meal_reminder("comida")
+
             if h == 20 and m == 0:
                 send_weekly_analysis() if now.weekday() == 6 else check_smart_alerts()
+
+            if h == 20 and m == 30: send_meal_reminder("cena")
 
             if h == 21 and m == 0:  _trigger("ejercicio", "night")
 

@@ -343,7 +343,17 @@ def ask_next_habit():
     habit = session["pending"][0]
     session["current"] = habit
     all_state = get_all_state()
-    msg = ai_checkin_message(habit, all_state)
+
+    # Para "comida": mostrar resumen del día en vez de pregunta genérica de IA
+    if habit["key"] == "comida":
+        try:
+            from comida import build_comida_checkin_msg
+            msg = build_comida_checkin_msg()
+        except Exception as e:
+            print(f"[comida checkin] {e}", flush=True)
+            msg = ai_checkin_message(habit, all_state)
+    else:
+        msg = ai_checkin_message(habit, all_state)
 
     if habit["key"] == "comida":
         keyboard = {"inline_keyboard": [[

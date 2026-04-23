@@ -289,6 +289,59 @@ def handle_finance_callback(data) -> bool:
 
     return False
 
+# ── Submenú y consultas ───────────────────────────────────────────────────────
+def send_finance_submenu():
+    send_message(
+        "💰 *Finanzas*",
+        {"inline_keyboard": [
+            [{"text": "💸 Registrar gasto", "callback_data": "fin_registrar"},
+             {"text": "📈 Ciclo actual",    "callback_data": "fin_ciclo"}],
+            [{"text": "📊 Por categoría",   "callback_data": "fin_cats"},
+             {"text": "💬 Consultar",       "callback_data": "fin_consultar"}],
+        ]}
+    )
+
+def handle_gastos_por_categoria():
+    today = date.today()
+    cycle_start, cycle_end = get_bbva_cycle(today)
+    exps   = sb_get("expenses", f"date=gte.{cycle_start.isoformat()}&date=lte.{cycle_end.isoformat()}&select=*")
+    gastos = [e for e in exps if e.get("entry_type", "gasto") not in ("ingreso_nomina", "ingreso_otro", "pago_tarjeta") and e.get("amount", 0) != 0]
+    if not gastos:
+        send_message("📊 Sin gastos este ciclo.")
+        return
+
+    by_cat = {}
+    for e in gastos:
+        cat = e.get("category", "otro")
+        by_cat[cat] = by_cat.get(cat, 0) + abs(e["amount"])
+    total = sum(by_cat.values())
+
+    lines = [f"📊 *Por categoría*\n_{cycle_start.strftime('%d %b')} → {cycle_end.strftime('%d %b')}_\n"]
+    for cat, amt in sorted(by_cat.items(), key=lambda x: x[1], reverse=True):
+        pct = int(amt / total * 100) if total > 0 else 0
+        lines.append(f"{CATS_FINANCE.get(cat, cat)} — ${amt:,.0f} ({pct}%)")
+    lines.append(f"\n💸 *Total: ${total:,.0f}*")
+    send_message("\n".join(lines))
+
+def handle_finance_query(text: str):
+    """Responde preguntas en lenguaje natural sobre los gastos."""
+    sixty_ago = (date.today() - timedelta(days=60)).isoformat()
+    exps = sb_get("expenses", f"date=gte.{sixty_ago}&select=date,amount,description,category,card&order=date.desc")
+
+    lines = []
+    for e in (exps or [])[:60]:
+        amt = abs(e.get("amount", 0))
+        cat = CATS_FINANCE.get(e.get("category", ""), "otro")
+        lines.append(f"- {e.get('date','')} ${amt:.0f} {e.get('description','')} ({cat})")
+
+    exp_text = "\n".join(lines) if lines else "Sin datos"
+    answer = ai_call(
+        f"Analista financiero. Responde en máx 4 líneas basándote SOLO en estos datos reales:\n"
+        f"{exp_text}\n\nPregunta: {text}",
+        max_tokens=200,
+    )
+    send_message(answer)
+
 # ── Análisis mensual (automático día 1) ───────────────────────────────────────
 def send_monthly_finance_analysis():
     today = date.today()

@@ -4,7 +4,14 @@ Importado por todos los módulos.
 """
 import os, json, requests
 from datetime import datetime, date
+from zoneinfo import ZoneInfo
 from dotenv import load_dotenv
+
+MX_TZ = ZoneInfo("America/Mexico_City")
+
+def now_mx() -> datetime:
+    """Hora actual en Ciudad de México."""
+    return datetime.now(MX_TZ)
 
 load_dotenv()
 
@@ -31,11 +38,16 @@ print(f"[Config] OK — Supabase: {SUPABASE_URL}", flush=True)
 
 # Estado en memoria compartido entre módulos
 session = {
-    "pending": [],
-    "current": None,
-    "results": {},
-    "block": None,
-    "waiting": False,
+    "pending":           [],
+    "current":           None,
+    "results":           {},
+    "block":             None,
+    "waiting":           False,
+    "flow":              None,   # flujo activo: "new_habit" | "set_reminder" | "fin_query"
+    "flow_step":         0,
+    "flow_data":         {},     # datos recopilados durante el flujo
+    "active_message_id": None,   # mensaje del check-in activo (se edita en lugar de enviar)
+    "active_chat_id":    None,
 }
 
 # ── Supabase ──────────────────────────────────────────────────────────────────
@@ -60,6 +72,10 @@ def sb_patch(table, params, data):
     r = requests.patch(f"{SUPABASE_URL}/rest/v1/{table}?{params}", headers=sb_headers(), json=data)
     return r.json()
 
+def sb_delete(table, params):
+    r = requests.delete(f"{SUPABASE_URL}/rest/v1/{table}?{params}", headers=sb_headers())
+    return r.status_code
+
 def get_all_state():
     return sb_get("daily_summary", "select=*")
 
@@ -74,13 +90,16 @@ def send_message(text, reply_markup=None):
 def answer_callback(callback_id):
     requests.post(f"{BASE_URL}/answerCallbackQuery", json={"callback_query_id": callback_id})
 
-def edit_message(chat_id, message_id, text):
-    requests.post(f"{BASE_URL}/editMessageText", json={
-        "chat_id": chat_id,
+def edit_message(chat_id, message_id, text, reply_markup=None):
+    payload = {
+        "chat_id":    chat_id,
         "message_id": message_id,
-        "text": text,
+        "text":       text,
         "parse_mode": "Markdown",
-    })
+    }
+    if reply_markup:
+        payload["reply_markup"] = json.dumps(reply_markup)
+    requests.post(f"{BASE_URL}/editMessageText", json=payload)
 
 def get_updates(offset=None):
     params = {"timeout": 30}

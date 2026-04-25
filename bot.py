@@ -198,54 +198,72 @@ def _reminders():
 
 def _trigger(key: str, block: str):
     """Inicia check-in para un hábito específico."""
-    habit = next((h for h in get_habits(block) if h["key"] == key), None)
-    if habit:
-        session.update(pending=[habit], results={}, block=block,
-                       flow=None, active_message_id=None, active_chat_id=None)
-        ask_next_habit()
+    try:
+        habits = get_habits(block)
+        habit  = next((h for h in habits if h["key"] == key), None)
+        if habit:
+            session.update(pending=[habit], results={}, block=block,
+                           flow=None, active_message_id=None, active_chat_id=None)
+            ask_next_habit()
+        else:
+            print(f"[scheduler] hábito '{key}' no encontrado (bloque={block}, "
+                  f"disponibles={[h['key'] for h in habits]})", flush=True)
+    except Exception as e:
+        print(f"[_trigger '{key}'] {type(e).__name__}: {e}", flush=True)
 
 def scheduler_loop():
     last = (-1, -1)
+    print("[scheduler] Hilo iniciado ✅", flush=True)
     while True:
-        now = now_mx()
-        h, m = now.hour, now.minute
-        if (h, m) != last:
-            last = (h, m)
+        try:
+            now = now_mx()
+            h, m = now.hour, now.minute
+            if (h, m) != last:
+                last = (h, m)
+                print(f"[scheduler] tick {h:02d}:{m:02d}", flush=True)
 
-            # Todos los bloques son `if` (no `elif`) para que múltiples
-            # acciones puedan dispararse en el mismo minuto.
-            if h == 7  and m == 30: send_menu()
+                # Todos los bloques son `if` (no `elif`) para que múltiples
+                # acciones puedan dispararse en el mismo minuto.
+                if h == 7  and m == 30: send_menu()
 
-            if h == 8  and m == 0:
-                _trigger("cama", "morning")
-                send_meal_reminder("desayuno")
+                if h == 8  and m == 0:
+                    _trigger("cama", "morning")
+                    send_meal_reminder("desayuno")
 
-            if h == 9  and m == 0:
-                s = next((x for x in get_all_state() if x.get("key") == "cama"), None)
-                if s and not s.get("done_today"):
-                    send_message("👀 ¿Ya tendiste la cama?", {"inline_keyboard": [[
-                        {"text": "✅ Ya", "callback_data": "done_cama"},
-                        {"text": "❌ No", "callback_data": "skip_cama"},
-                    ]]})
-                if now.day == 19:
-                    send_monthly_finance_analysis()
+                if h == 9  and m == 0:
+                    try:
+                        s = next((x for x in get_all_state() if x.get("key") == "cama"), None)
+                        if s and not s.get("done_today"):
+                            send_message("👀 ¿Ya tendiste la cama?", {"inline_keyboard": [[
+                                {"text": "✅ Ya", "callback_data": "done_cama"},
+                                {"text": "❌ No", "callback_data": "skip_cama"},
+                            ]]})
+                    except Exception as e:
+                        print(f"[scheduler 9:00] {e}", flush=True)
+                    if now.day == 19:
+                        send_monthly_finance_analysis()
 
-            if h == 14 and m == 0:  send_meal_reminder("comida")
+                if h == 14 and m == 0:  send_meal_reminder("comida")
+                if h == 17 and m == 0:  send_meal_reminder("snack")
+                if h == 19 and m == 30: send_meal_reminder("cena")
 
-            if h == 20 and m == 0:
-                send_weekly_analysis() if now.weekday() == 6 else check_smart_alerts()
+                if h == 20 and m == 0:
+                    if now.weekday() == 6:
+                        send_weekly_analysis()
+                    else:
+                        check_smart_alerts()
 
-            if h == 17 and m == 0:  send_meal_reminder("snack")
-            if h == 19 and m == 30: send_meal_reminder("cena")
+                if h == 21 and m == 0:  _trigger("ejercicio", "night")
+                if h == 22 and m == 0:  _trigger("comida", "night")
 
-            if h == 21 and m == 0:  _trigger("ejercicio", "night")
+                # Recordatorios configurados en BD
+                for rem in _reminders():
+                    if rem.get("hour") == h and rem.get("minute") == m:
+                        _trigger(rem["habit_key"], rem.get("block", "morning"))
 
-            if h == 22 and m == 0:  _trigger("comida", "night")
-
-            # Recordatorios configurados en BD
-            for rem in _reminders():
-                if rem.get("hour") == h and rem.get("minute") == m:
-                    _trigger(rem["habit_key"], rem.get("block", "morning"))
+        except Exception as e:
+            # El scheduler NUNCA debe morir — capturamos todo y continuamos
+            print(f"[scheduler] ERROR (loop continúa): {type(e).__name__}: {e}", flush=True)
 
         time.sleep(30)
 

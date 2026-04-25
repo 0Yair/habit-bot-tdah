@@ -111,59 +111,95 @@ def test_supabase_connection() -> str:
     return "\n".join(lines)
 
 # ── Foto de ticket ────────────────────────────────────────────────────────────
-def ai_extract_expense_from_photo(image_base64: str) -> dict:
+def ai_extract_expense_from_photo(image_base64: str, media_type: str = "image/jpeg") -> dict:
     import requests as req
     from shared import ANTHROPIC_KEY
-    r = req.post(
-        "https://api.anthropic.com/v1/messages",
-        headers={
-            "x-api-key": ANTHROPIC_KEY,
-            "anthropic-version": "2023-06-01",
-            "content-type": "application/json",
-        },
-        json={
-            "model": "claude-haiku-4-5-20251001",
-            "max_tokens": 300,
-            "messages": [{
-                "role": "user",
-                "content": [
-                    {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": image_base64}},
-                    {"type": "text", "text": (
-                        "Extrae del ticket. Responde SOLO JSON sin markdown:\n"
-                        '{"amount": número, "description": "comercio", '
-                        '"category": "renta|comida_super|comida_fuera|transporte|entretenimiento|servicios|salud|educacion|subscripciones|movilidad|ahorros_transfer|otro", '
-                        '"date": "YYYY-MM-DD o null"}\n'
-                        'Si no se puede leer: {"error": "no_readable"}'
-                    )},
-                ],
-            }],
-        },
-    )
-    text = r.json()["content"][0]["text"]
-    clean = text.strip().replace("```json", "").replace("```", "").strip()
-    return json.loads(clean)
+    try:
+        r = req.post(
+            "https://api.anthropic.com/v1/messages",
+            headers={
+                "x-api-key": ANTHROPIC_KEY,
+                "anthropic-version": "2023-06-01",
+                "content-type": "application/json",
+            },
+            json={
+                "model": "claude-haiku-4-5-20251001",
+                "max_tokens": 300,
+                "messages": [{
+                    "role": "user",
+                    "content": [
+                        {"type": "image", "source": {"type": "base64", "media_type": media_type, "data": image_base64}},
+                        {"type": "text", "text": (
+                            "Extrae del ticket. Responde SOLO JSON sin markdown:\n"
+                            '{"amount": número, "description": "comercio", '
+                            '"category": "renta|comida_super|comida_fuera|transporte|entretenimiento|servicios|salud|educacion|subscripciones|movilidad|ahorros_transfer|otro", '
+                            '"date": "YYYY-MM-DD o null"}\n'
+                            'Si no se puede leer: {"error": "no_readable"}'
+                        )},
+                    ],
+                }],
+            },
+            timeout=30,   # ← sin timeout se cuelga para siempre
+        )
+    except req.Timeout:
+        print("[ai_extract] Timeout llamando a Anthropic", flush=True)
+        return {"error": "timeout"}
+
+    resp = r.json()
+    print(f"[ai_extract] HTTP {r.status_code} | {str(resp)[:200]}", flush=True)
+
+    # Si la API devuelve error (modelo incorrecto, cuota, etc.) lo capturamos aquí
+    if "content" not in resp:
+        print(f"[ai_extract] Respuesta inesperada: {resp}", flush=True)
+        return {"error": "api_error"}
+
+    raw = resp["content"][0]["text"].strip().replace("```json", "").replace("```", "").strip()
+    return json.loads(raw)
 
 def handle_photo(update: dict):
     import requests as req
+    import base64
     from shared import BASE_URL, TOKEN
-    msg = update.get("message", {})
+
+    msg    = update.get("message", {})
     photos = msg.get("photo", [])
     if not photos:
         return
+
+    # Usar la foto más grande pero no más de 5 MB (Anthropic límite)
     best_photo = max(photos, key=lambda p: p.get("file_size", 0))
     send_message("📸 Leyendo ticket...")
+
     try:
-        file_r = req.get(f"{BASE_URL}/getFile", params={"file_id": best_photo["file_id"]})
+        # 1. Obtener URL del archivo
+        file_r    = req.get(f"{BASE_URL}/getFile",
+                            params={"file_id": best_photo["file_id"]}, timeout=10)
         file_path = file_r.json()["result"]["file_path"]
-        img_r = req.get(f"https://api.telegram.org/file/bot{TOKEN}/{file_path}")
-        image_base64 = __import__("base64").b64encode(img_r.content).decode()
-        expense = ai_extract_expense_from_photo(image_base64)
+        print(f"[handle_photo] file_path={file_path}", flush=True)
+
+        # 2. Descargar imagen
+        img_r      = req.get(f"https://api.telegram.org/file/bot{TOKEN}/{file_path}",
+                             timeout=20)
+        image_b64  = base64.b64encode(img_r.content).decode()
+
+        # Detectar tipo MIME por extensión
+        ext        = file_path.rsplit(".", 1)[-1].lower()
+        media_type = "image/png" if ext == "png" else "image/jpeg"
+
+        # 3. Extraer datos con IA
+        expense = ai_extract_expense_from_photo(image_b64, media_type)
 
         if "error" in expense:
-            send_message("❌ No pude leer el ticket. Usa:\n`/gasto 250 comida_fuera BBVA_Gold Descripción`")
+            reasons = {"timeout": "tardó demasiado", "api_error": "error de API",
+                       "no_readable": "no pude leer el ticket"}
+            reason = reasons.get(expense["error"], "error desconocido")
+            send_message(
+                f"❌ {reason.capitalize()}.\n"
+                "Usa el comando manual:\n`/gasto 250 comida_fuera BBVA_Gold Tacos`"
+            )
             return
 
-        # Usar fecha de hoy si el ticket no tiene fecha o la fecha es de más de 30 días atrás
+        # Normalizar fecha
         today = date.today()
         try:
             exp_date = date.fromisoformat(expense["date"]) if expense.get("date") else None
@@ -174,7 +210,7 @@ def handle_photo(update: dict):
 
         session["pending_expense"] = expense
         cat_label = CATS_FINANCE.get(expense.get("category", "otro"), "📌 Otro")
-        amount = abs(expense.get("amount", 0))
+        amount    = abs(expense.get("amount", 0))
 
         send_message(
             f"🧾 *${amount:.0f}* — {expense.get('description', '')}\n"
@@ -186,9 +222,10 @@ def handle_photo(update: dict):
                  {"text": "Efectivo",     "callback_data": "exp_card_Efectivo"}],
             ]},
         )
+
     except Exception as e:
-        print(f"Error foto: {e}", flush=True)
-        send_message("❌ Error procesando ticket. Intenta de nuevo o usa `/gasto` manual.")
+        print(f"[handle_photo] excepción: {type(e).__name__}: {e}", flush=True)
+        send_message("❌ Error procesando la foto. Usa el comando manual:\n`/gasto 250 comida_fuera BBVA_Gold Tacos`")
 
 # ── Comando manual /gasto ─────────────────────────────────────────────────────
 def handle_gasto_command(text: str):

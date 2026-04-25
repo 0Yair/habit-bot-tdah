@@ -12,7 +12,8 @@ from shared import session, sb_get, sb_post, sb_patch, send_message, now_mx
 MEAL_TYPES = {
     "desayuno": {"emoji": "🥣", "label": "Desayuno", "hour": 8,  "minute": 0},
     "comida":   {"emoji": "🍽️", "label": "Comida",   "hour": 14, "minute": 0},
-    "cena":     {"emoji": "🌙", "label": "Cena",     "hour": 20, "minute": 30},
+    "snack":    {"emoji": "🍓", "label": "Snack",    "hour": 17, "minute": 0},
+    "cena":     {"emoji": "🌙", "label": "Cena",     "hour": 19, "minute": 30},
 }
 DAYS_ES = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"]
 _ICONS  = {"si": "✅", "parcial": "〰️", "no": "❌"}

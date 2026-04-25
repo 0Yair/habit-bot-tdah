@@ -235,7 +235,8 @@ def scheduler_loop():
             if h == 20 and m == 0:
                 send_weekly_analysis() if now.weekday() == 6 else check_smart_alerts()
 
-            if h == 20 and m == 30: send_meal_reminder("cena")
+            if h == 17 and m == 0:  send_meal_reminder("snack")
+            if h == 19 and m == 30: send_meal_reminder("cena")
 
             if h == 21 and m == 0:  _trigger("ejercicio", "night")
 

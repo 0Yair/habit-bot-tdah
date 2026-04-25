@@ -154,7 +154,11 @@ def ai_extract_expense_from_photo(image_base64: str, media_type: str = "image/jp
         return {"error": "api_error"}
 
     raw = resp["content"][0]["text"].strip().replace("```json", "").replace("```", "").strip()
-    return json.loads(raw)
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        print(f"[ai_extract] JSON inválido: {raw[:200]}", flush=True)
+        return {"error": "no_readable"}
 
 def handle_photo(update: dict):
     import requests as req

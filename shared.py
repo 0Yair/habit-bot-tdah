@@ -60,20 +60,20 @@ def sb_headers():
     }
 
 def sb_get(table, params=""):
-    r = requests.get(f"{SUPABASE_URL}/rest/v1/{table}?{params}", headers=sb_headers())
+    r = requests.get(f"{SUPABASE_URL}/rest/v1/{table}?{params}", headers=sb_headers(), timeout=10)
     return r.json()
 
 def sb_post(table, data):
-    r = requests.post(f"{SUPABASE_URL}/rest/v1/{table}", headers=sb_headers(), json=data)
+    r = requests.post(f"{SUPABASE_URL}/rest/v1/{table}", headers=sb_headers(), json=data, timeout=10)
     print(f"[sb_post] {table} → HTTP {r.status_code} | {r.text[:200]}", flush=True)
     return r.json()
 
 def sb_patch(table, params, data):
-    r = requests.patch(f"{SUPABASE_URL}/rest/v1/{table}?{params}", headers=sb_headers(), json=data)
+    r = requests.patch(f"{SUPABASE_URL}/rest/v1/{table}?{params}", headers=sb_headers(), json=data, timeout=10)
     return r.json()
 
 def sb_delete(table, params):
-    r = requests.delete(f"{SUPABASE_URL}/rest/v1/{table}?{params}", headers=sb_headers())
+    r = requests.delete(f"{SUPABASE_URL}/rest/v1/{table}?{params}", headers=sb_headers(), timeout=10)
     return r.status_code
 
 def get_all_state():
@@ -84,11 +84,12 @@ def send_message(text, reply_markup=None):
     payload = {"chat_id": CHAT_ID, "text": text, "parse_mode": "Markdown"}
     if reply_markup:
         payload["reply_markup"] = json.dumps(reply_markup)
-    r = requests.post(f"{BASE_URL}/sendMessage", json=payload)
+    r = requests.post(f"{BASE_URL}/sendMessage", json=payload, timeout=10)
     return r.json()
 
 def answer_callback(callback_id):
-    requests.post(f"{BASE_URL}/answerCallbackQuery", json={"callback_query_id": callback_id})
+    requests.post(f"{BASE_URL}/answerCallbackQuery",
+                  json={"callback_query_id": callback_id}, timeout=5)
 
 def edit_message(chat_id, message_id, text, reply_markup=None):
     payload = {
@@ -99,7 +100,7 @@ def edit_message(chat_id, message_id, text, reply_markup=None):
     }
     if reply_markup:
         payload["reply_markup"] = json.dumps(reply_markup)
-    requests.post(f"{BASE_URL}/editMessageText", json=payload)
+    requests.post(f"{BASE_URL}/editMessageText", json=payload, timeout=10)
 
 def get_updates(offset=None):
     params = {"timeout": 30}
@@ -122,5 +123,10 @@ def ai_call(prompt, max_tokens=150):
             "max_tokens": max_tokens,
             "messages": [{"role": "user", "content": prompt}],
         },
+        timeout=30,
     )
-    return r.json()["content"][0]["text"]
+    resp = r.json()
+    if "content" not in resp:
+        print(f"[ai_call] Error API: {resp}", flush=True)
+        return ""
+    return resp["content"][0]["text"]

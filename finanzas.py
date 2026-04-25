@@ -139,7 +139,7 @@ def ai_extract_expense_from_photo(image_base64: str, media_type: str = "image/jp
                     ],
                 }],
             },
-            timeout=30,   # ← sin timeout se cuelga para siempre
+            timeout=60,   # upload de imagen puede tardar varios segundos
         )
     except req.Timeout:
         print("[ai_extract] Timeout llamando a Anthropic", flush=True)
@@ -170,8 +170,12 @@ def handle_photo(update: dict):
     if not photos:
         return
 
-    # Usar la foto más grande pero no más de 5 MB (Anthropic límite)
-    best_photo = max(photos, key=lambda p: p.get("file_size", 0))
+    # Telegram entrega varias resoluciones; la penúltima es suficiente para
+    # leer texto (menor upload = más rápido) sin perder legibilidad
+    if len(photos) >= 3:
+        best_photo = photos[-2]
+    else:
+        best_photo = photos[-1]
     send_message("📸 Leyendo ticket...")
 
     try:

@@ -139,10 +139,10 @@ def ai_extract_expense_from_photo(image_base64: str, media_type: str = "image/jp
                     ],
                 }],
             },
-            timeout=60,   # upload de imagen puede tardar varios segundos
+            timeout=60,
         )
-    except req.Timeout:
-        print("[ai_extract] Timeout llamando a Anthropic", flush=True)
+    except Exception as e:
+        print(f"[ai_extract] Error de red: {type(e).__name__}: {e}", flush=True)
         return {"error": "timeout"}
 
     resp = r.json()

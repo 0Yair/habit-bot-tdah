@@ -266,5 +266,5 @@ def _save_plan():
     session["flow"] = None
     send_message(
         f"✅ Plan guardado — *{saved} comidas* en la semana.\n"
-        f"Recordatorios automáticos: 🥣 8:00 · 🍽️ 14:00 · 🌙 20:30"
+        f"Recordatorios automáticos: 🥣 8:00 · 🍽️ 14:00 · 🍓 17:00 · 🌙 19:30"
     )

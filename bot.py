@@ -2,6 +2,7 @@
 BOT PRINCIPAL — Orquesta los módulos: habitos, finanzas, asistente.
 """
 import socket, sys, time, threading
+from collections import deque
 import requests
 
 from shared import (
@@ -295,7 +296,7 @@ def main():
         pass
 
     print("✅ Esperando mensajes...", flush=True)
-    processed: set = set()
+    processed: deque = deque(maxlen=200)   # guarda los últimos 200 update_ids
 
     while True:
         try:
@@ -304,16 +305,18 @@ def main():
                 offset = uid + 1
                 if uid in processed:
                     continue
-                processed.add(uid)
-                if len(processed) > 200:
-                    processed = set(list(processed)[-100:])
+                processed.append(uid)
 
                 if "callback_query" in update:
                     handle_callback(update)
                 elif "message" in update:
                     msg = update["message"]
-                    requests.post(f"{BASE_URL}/sendChatAction",
-                                  json={"chat_id": CHAT_ID, "action": "typing"})
+                    try:
+                        requests.post(f"{BASE_URL}/sendChatAction",
+                                      json={"chat_id": CHAT_ID, "action": "typing"},
+                                      timeout=5)
+                    except Exception:
+                        pass
                     if "photo" in msg:
                         handle_photo(update)
                     else:

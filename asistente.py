@@ -83,8 +83,8 @@ def handle_persona_command(text):
                 days_left = (next_bd - today).days
                 if days_left <= 30:
                     bday_str = f"\n\n🎂 Cumple en {days_left}d ({bd.strftime('%d %b')})"
-            except:
-                pass
+            except Exception as e:
+                print(f"[persona info] Error parsing birthday: {e}", flush=True)
         return f"👤 *{person['name']}*\n\n{summary}{bday_str}"
 
     elif subcmd == "suggest":

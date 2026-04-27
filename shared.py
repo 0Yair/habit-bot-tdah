@@ -60,8 +60,17 @@ def sb_headers():
     }
 
 def sb_get(table, params=""):
-    r = requests.get(f"{SUPABASE_URL}/rest/v1/{table}?{params}", headers=sb_headers(), timeout=10)
-    return r.json()
+    try:
+        r    = requests.get(f"{SUPABASE_URL}/rest/v1/{table}?{params}", headers=sb_headers(), timeout=10)
+        data = r.json()
+    except Exception as e:
+        print(f"[sb_get] Excepción en '{table}': {e}", flush=True)
+        return []
+    # Supabase devuelve dict con 'code'/'message' cuando hay error (tabla no existe, RLS, etc.)
+    if isinstance(data, dict):
+        print(f"[sb_get] Error en '{table}': {data}", flush=True)
+        return []
+    return data
 
 def sb_post(table, data):
     r = requests.post(f"{SUPABASE_URL}/rest/v1/{table}", headers=sb_headers(), json=data, timeout=10)
@@ -104,7 +113,7 @@ def edit_message(chat_id, message_id, text, reply_markup=None):
 
 def get_updates(offset=None):
     params = {"timeout": 30}
-    if offset:
+    if offset is not None:          # 0 es falsy en Python — usar `is not None`
         params["offset"] = offset
     r = requests.get(f"{BASE_URL}/getUpdates", params=params, timeout=35)
     return r.json().get("result", [])

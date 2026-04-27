@@ -4,7 +4,7 @@ Mensajes cortos: máx 2 líneas en preguntas, 1 línea en reacciones.
 """
 import re, json, time
 from datetime import datetime, date, timedelta
-from shared import session, sb_get, sb_post, sb_patch, get_all_state, send_message, edit_message, ai_call, CHAT_ID
+from shared import session, sb_get, sb_post, sb_patch, get_all_state, send_message, edit_message, ai_call, CHAT_ID, now_mx
 
 # ── Supabase ──────────────────────────────────────────────────────────────────
 def get_habits(block=None):
@@ -15,17 +15,17 @@ def get_habits(block=None):
 
 def log_habit(habit_key, done, week_level, note=None):
     sb_post("habit_logs", {
-        "habit_key": habit_key,
-        "done":      done,
+        "habit_key":  habit_key,
+        "done":       done,
         "week_level": week_level,
-        "note":      note,
-        "logged_at": datetime.now().isoformat(),
+        "note":       note,
+        "logged_at":  now_mx().isoformat(),   # siempre en zona México
     })
     state_list = sb_get("user_state", f"habit_key=eq.{habit_key}&select=*")
     if not state_list:
         return
     state = state_list[0]
-    today = date.today()
+    today = now_mx().date()                   # fecha en México, no UTC
     last  = date.fromisoformat(state["last_logged"]) if state.get("last_logged") else None
     if done:
         new_streak = (state["streak"] + 1) if last and (today - last).days == 1 else 1
@@ -35,7 +35,7 @@ def log_habit(habit_key, done, week_level, note=None):
         "streak":      new_streak,
         "best_streak": max(new_streak, state.get("best_streak", 0)),
         "last_logged": today.isoformat(),
-        "updated_at":  datetime.now().isoformat(),
+        "updated_at":  now_mx().isoformat(),
     })
 
 def advance_week_if_needed(habit_key):
@@ -271,7 +271,7 @@ def _save_new_habit():
         "streak":       0,
         "best_streak":  0,
         "current_week": 1,
-        "updated_at":   datetime.now().isoformat(),
+        "updated_at":   now_mx().isoformat(),
     })
 
     session["flow"]      = None
@@ -414,6 +414,12 @@ def handle_habit_callback(data, chat_id, message_id, original_text):
         habit_key, done, note = data[5:], False, "no"
     else:
         return False
+
+    # Guard: ignorar taps tardíos si no hay check-in activo para este hábito
+    pending_keys = {h.get("key") for h in session.get("pending", [])}
+    if not pending_keys or habit_key not in pending_keys:
+        print(f"[habit_callback] tap tardío ignorado: {habit_key}", flush=True)
+        return True   # consumir el callback sin hacer nada
 
     all_state = get_all_state()
     habit = next((h for h in all_state if h.get("key") == habit_key), None)

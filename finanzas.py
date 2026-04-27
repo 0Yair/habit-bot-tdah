@@ -303,14 +303,15 @@ def handle_finance_callback(data) -> bool:
                 )
                 session.pop("pending_expense", None)
             else:
-                send_message("❌ Error al guardar en Supabase. Revisa los logs.")
+                session.pop("pending_expense", None)   # evitar doble registro accidental
+                send_message("❌ Error al guardar. Manda la foto de nuevo.")
         else:
             send_message("❌ No hay gasto pendiente. Manda la foto de nuevo.")
         return True
 
     if data.startswith("gasto_confirm_"):
         try:
-            exp = __import__("json").loads(data[14:])
+            exp = json.loads(data[14:])
             if save_expense(exp):
                 send_message(f"✅ *{exp['description']}* — ${abs(exp['amount']):.0f} en {exp['card']}")
             else:
@@ -390,7 +391,7 @@ def handle_finance_query(text: str):
 # ── Análisis mensual (automático día 1) ───────────────────────────────────────
 def send_monthly_finance_analysis():
     today = date.today()
-    prev_cycle_end = today.replace(day=18) - timedelta(days=1) if today.day == 19 else today - timedelta(days=1)
+    prev_cycle_end = today.replace(day=18) if today.day == 19 else today - timedelta(days=1)
     cycle_start, cycle_end = get_bbva_cycle(prev_cycle_end)
 
     exps = sb_get("expenses", f"date=gte.{cycle_start.isoformat()}&date=lte.{cycle_end.isoformat()}&select=*")

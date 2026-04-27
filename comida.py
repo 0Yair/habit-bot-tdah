@@ -44,13 +44,19 @@ def log_meal(meal_type: str, status: str):
 # ── Recordatorios ─────────────────────────────────────────────────────────────
 def send_meal_reminder(meal_type: str):
     try:
-        plan  = get_today_plan()
+        plan = get_today_plan()
     except Exception as e:
         print(f"[send_meal_reminder] get_today_plan: {e}", flush=True)
-        plan  = []
+        return  # sin plan accesible, no enviar
+
     entry = next((p for p in (plan or []) if p.get("meal_type") == meal_type), None)
-    info  = MEAL_TYPES.get(meal_type, {"emoji": "🍴", "label": meal_type})
-    body  = f"\n_{entry['description']}_" if (entry and entry.get("description")) else ""
+    if not entry:
+        # Día sin plan (ej. fin de semana) — no enviar recordatorio
+        print(f"[send_meal_reminder] sin plan para '{meal_type}' hoy, skipping", flush=True)
+        return
+
+    info = MEAL_TYPES.get(meal_type, {"emoji": "🍴", "label": meal_type})
+    body = f"\n_{entry['description']}_" if entry.get("description") else ""
     send_message(
         f"{info['emoji']} *{info['label']}*{body}\n\n¿Lo hiciste?",
         {"inline_keyboard": [[

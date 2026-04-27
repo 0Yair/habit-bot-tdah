@@ -217,23 +217,44 @@ def handle_photo(update: dict):
             expense["date"] = today.isoformat()
 
         session["pending_expense"] = expense
-        cat_label = CATS_FINANCE.get(expense.get("category", "otro"), "📌 Otro")
-        amount    = abs(expense.get("amount", 0))
-
-        send_message(
-            f"🧾 *${amount:.0f}* — {expense.get('description', '')}\n"
-            f"📂 {cat_label} · {expense.get('date')}\n\n¿En qué tarjeta?",
-            {"inline_keyboard": [
-                [{"text": "BBVA Gold",    "callback_data": "exp_card_BBVA_Gold"},
-                 {"text": "HSBC Volaris", "callback_data": "exp_card_HSBC_Volaris"}],
-                [{"text": "BBVA Débito",  "callback_data": "exp_card_BBVA_Debito"},
-                 {"text": "Efectivo",     "callback_data": "exp_card_Efectivo"}],
-            ]},
-        )
+        _send_expense_confirmation(expense)
 
     except Exception as e:
         print(f"[handle_photo] excepción: {type(e).__name__}: {e}", flush=True)
         send_message("❌ Error procesando la foto. Usa el comando manual:\n`/gasto 250 comida_fuera BBVA_Gold Tacos`")
+
+# ── Helpers de confirmación de gasto ─────────────────────────────────────────
+def _card_keyboard():
+    """Teclado de selección de tarjeta + opción de editar categoría."""
+    return {"inline_keyboard": [
+        [{"text": "BBVA Gold",    "callback_data": "exp_card_BBVA_Gold"},
+         {"text": "HSBC Volaris", "callback_data": "exp_card_HSBC_Volaris"}],
+        [{"text": "BBVA Débito",  "callback_data": "exp_card_BBVA_Debito"},
+         {"text": "Efectivo",     "callback_data": "exp_card_Efectivo"}],
+        [{"text": "✏️ Cambiar categoría", "callback_data": "exp_edit_cat"}],
+    ]}
+
+def _send_expense_confirmation(exp: dict):
+    """Muestra el resumen del gasto pendiente y pide tarjeta."""
+    cat_label = CATS_FINANCE.get(exp.get("category", "otro"), "📌 Otro")
+    amount    = abs(exp.get("amount", 0))
+    send_message(
+        f"🧾 *${amount:.0f}* — {exp.get('description', '')}\n"
+        f"📂 {cat_label} · {exp.get('date')}\n\n¿En qué tarjeta?",
+        _card_keyboard(),
+    )
+
+def _send_category_picker():
+    """Muestra todas las categorías disponibles para elegir."""
+    rows = []
+    items = list(CATS_FINANCE.items())
+    for i in range(0, len(items), 2):
+        row = [{"text": items[i][1], "callback_data": f"exp_setcat_{items[i][0]}"}]
+        if i + 1 < len(items):
+            row.append({"text": items[i+1][1], "callback_data": f"exp_setcat_{items[i+1][0]}"})
+        rows.append(row)
+    rows.append([{"text": "⬅️ Atrás", "callback_data": "exp_back_to_card"}])
+    send_message("📂 *Elige la categoría:*", {"inline_keyboard": rows})
 
 # ── Comando manual /gasto ─────────────────────────────────────────────────────
 def handle_gasto_command(text: str):
@@ -289,7 +310,30 @@ def handle_gastos_resumen():
 
 # ── Callbacks de gasto ────────────────────────────────────────────────────────
 def handle_finance_callback(data) -> bool:
-    """Maneja exp_card_, gasto_confirm_, gasto_cat_. Retorna True si lo procesó."""
+    """Maneja exp_card_, exp_edit_cat, exp_setcat_, exp_back_to_card, gasto_confirm_, gasto_cat_."""
+
+    # Editar categoría — muestra el picker
+    if data == "exp_edit_cat":
+        if "pending_expense" not in session:
+            send_message("❌ No hay gasto pendiente. Manda la foto de nuevo.")
+            return True
+        _send_category_picker()
+        return True
+
+    # Categoría seleccionada — actualiza y vuelve a confirmar
+    if data.startswith("exp_setcat_"):
+        cat_key = data[11:]
+        if "pending_expense" in session and cat_key in CATS_FINANCE:
+            session["pending_expense"]["category"] = cat_key
+            _send_expense_confirmation(session["pending_expense"])
+        return True
+
+    # Botón "Atrás" desde el picker de categorías
+    if data == "exp_back_to_card":
+        if "pending_expense" in session:
+            _send_expense_confirmation(session["pending_expense"])
+        return True
+
     if data.startswith("exp_card_"):
         card = data[9:]
         if "pending_expense" in session:

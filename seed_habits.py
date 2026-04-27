@@ -14,12 +14,7 @@ HABITS = [
         "emoji": "🏋️",
         "block": "night",
         "week_levels": [
-            {"week": 1,  "label": "Arranque",  "desc": "20 min · 3 días esta semana"},
-            {"week": 8,  "label": "Base",       "desc": "30 min · 4 días esta semana"},
-            {"week": 15, "label": "Ritmo",      "desc": "45 min · 5 días esta semana"},
-            {"week": 22, "label": "Meta",       "desc": "1 hora · 5 días esta semana"},
-            {"week": 29, "label": "Avanzado",   "desc": "1 hora · 6 días esta semana"},
-            {"week": 36, "label": "Élite",      "desc": "1 hora · 6 días sin falta"},
+            {"week": 1, "label": "1h al día", "desc": "1 hora · meta semanal 6 horas"},
         ],
         # Meta diaria: 1 hora   |   Meta semanal: 6 horas (6 días)
     },
@@ -29,12 +24,7 @@ HABITS = [
         "emoji": "🍽️",
         "block": "night",
         "week_levels": [
-            {"week": 1,  "label": "Inicio",     "desc": "Seguir el plan 2 días/semana"},
-            {"week": 8,  "label": "Hábito",     "desc": "Comer balanceado 3 días/semana"},
-            {"week": 15, "label": "Constancia", "desc": "Comer balanceado 4 días/semana"},
-            {"week": 22, "label": "Meta",       "desc": "5 días consciente y balanceado"},
-            {"week": 29, "label": "Estilo",     "desc": "5 días proteico, balanceado y porciones"},
-            {"week": 36, "label": "Maestría",   "desc": "5+ días sin esfuerzo consciente"},
+            {"week": 1, "label": "Balanceado", "desc": "5 días/semana consciente, balanceado y proteico"},
         ],
         # Meta diaria: comer balanceado según la dieta
         # Meta semanal: 5 días consciente, balanceado y con porciones correctas
@@ -78,10 +68,10 @@ def main():
         print()
 
     print("✅ Listo.\n")
-    print("Metas configuradas:")
-    print("  🏋️  Ejercicio — diaria: 1 hora | semanal: 6 horas (6 días)")
-    print("  🍽️  Comida    — diaria: comer balanceado | semanal: 5 días consciente y proteico")
-    print("\nEl bot hará check-in de Ejercicio a las 21:00 y de Comida a las 22:00.")
+    print("Metas:")
+    print("  🏋️  Ejercicio — 1 hora/día · 6 horas/semana")
+    print("  🍽️  Comida    — comer balanceado/día · 5 días consciente y proteico/semana")
+    print("\nCheck-ins: Ejercicio a las 21:00 · Comida a las 22:00")
 
 if __name__ == "__main__":
     main()

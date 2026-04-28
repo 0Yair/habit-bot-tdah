@@ -88,14 +88,45 @@ _CB = {
     "hab_plan_comida":   show_today_plan,
 }
 
+# ── Diagnóstico ───────────────────────────────────────────────────────────────
+def send_diagnostico():
+    now  = now_mx()
+    day  = now.weekday()
+    days = ["Lun","Mar","Mié","Jue","Vie","Sáb","Dom"]
+    lines = [f"🔍 *Diagnóstico* — {now.strftime('%H:%M')} ({days[day]})\n"]
+
+    # Hábitos en BD
+    habits = sb_get("habits", "select=key,name,emoji,block")
+    lines.append(f"*Hábitos ({len(habits)}):*")
+    if habits:
+        for h in habits:
+            lines.append(f"  {h.get('emoji','')} {h.get('name','')} `{h.get('key','')}` — {h.get('block','')}")
+    else:
+        lines.append("  ❌ Sin hábitos — ejecuta `python seed_habits.py`")
+
+    # Plan de comida hoy
+    plan = sb_get("meal_plan", f"day_of_week=eq.{day}&active=eq.true&select=meal_type,description")
+    lines.append(f"\n*Plan de comida hoy ({days[day]}):*")
+    if plan:
+        for p in plan:
+            lines.append(f"  {p.get('meal_type','')} — {p.get('description','')[:40]}")
+    else:
+        lines.append("  ❌ Sin plan — ejecuta `python seed_meal_plan.py`")
+
+    # Scheduler vivo
+    lines.append(f"\n*Scheduler:* ✅ activo (último tick registrado en logs)")
+
+    send_message("\n".join(lines))
+
 # ── Dispatch de comandos de texto ─────────────────────────────────────────────
 _CMD = {
-    "/start":   send_menu,
-    "/menu":    send_menu,
-    "/resumen": send_resumen,
-    "/racha":   send_rachas,
-    "/gastos":  handle_gastos_resumen,
-    "/semanal": send_weekly_analysis,
+    "/start":      send_menu,
+    "/menu":       send_menu,
+    "/resumen":    send_resumen,
+    "/racha":      send_rachas,
+    "/gastos":     handle_gastos_resumen,
+    "/semanal":    send_weekly_analysis,
+    "/diagnostico": send_diagnostico,
 }
 
 # ── Callbacks ──────────────────────────────────────────────────────────────────

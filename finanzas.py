@@ -244,7 +244,7 @@ def _send_expense_confirmation(exp: dict):
         _card_keyboard(),
     )
 
-def _send_category_picker():
+def _send_category_picker(header: str = "📂 *Elige la categoría:*"):
     """Muestra todas las categorías disponibles para elegir."""
     rows = []
     items = list(CATS_FINANCE.items())
@@ -254,34 +254,54 @@ def _send_category_picker():
             row.append({"text": items[i+1][1], "callback_data": f"exp_setcat_{items[i+1][0]}"})
         rows.append(row)
     rows.append([{"text": "⬅️ Atrás", "callback_data": "exp_back_to_card"}])
-    send_message("📂 *Elige la categoría:*", {"inline_keyboard": rows})
+    send_message(header, {"inline_keyboard": rows})
 
 # ── Comando manual /gasto ─────────────────────────────────────────────────────
 def handle_gasto_command(text: str):
-    parts = text.strip().split(" ", 4)
-    if len(parts) < 3:
+    """
+    Formatos aceptados:
+      /gasto 250                    → pide descripción, categoría y tarjeta con botones
+      /gasto 250 Tacos              → pide categoría y tarjeta con botones
+      /gasto 250 Tacos comida_fuera → pide solo tarjeta con botones
+    """
+    parts = text.strip().split(" ", 3)
+
+    # Sin monto → ayuda
+    if len(parts) < 2:
         send_message(
-            "💸 `/gasto MONTO CATEGORÍA TARJETA Descripción`\n\n"
-            "Ejemplo: `/gasto 250 comida_fuera BBVA_Gold Tacos`\n\n"
-            "Cats: `renta comida_super comida_fuera transporte entretenimiento servicios salud educacion subscripciones movilidad otro`\n"
-            "Tarjetas: `BBVA_Gold HSBC_Volaris BBVA_Debito Efectivo`"
+            "💸 *Registrar gasto*\n\n"
+            "Escribe el monto y opcionalmente la descripción:\n"
+            "`/gasto 250`\n"
+            "`/gasto 250 Tacos en el mercado`"
         )
         return
+
     try:
-        amount      = float(parts[1])
-        category    = parts[2] if len(parts) > 2 else "otro"
-        card        = parts[3] if len(parts) > 3 else "BBVA_Gold"
-        description = parts[4] if len(parts) > 4 else "Gasto registrado"
-        ok = save_expense({"amount": amount, "category": category, "card": card, "description": description})
-        if ok:
-            send_message(
-                f"✅ *${amount:.0f}* — {description}\n"
-                f"{CATS_FINANCE.get(category,'📌 Otro')} · {CARDS_FINANCE.get(card, card)}"
-            )
-        else:
-            send_message("❌ Error al guardar en Supabase. Revisa los logs.")
-    except Exception as e:
-        send_message(f"❌ {e}\nFormato: `/gasto 250 comida_fuera BBVA_Gold Descripción`")
+        amount = float(parts[1])
+    except ValueError:
+        send_message("⚠️ El primer valor debe ser el monto. Ej: `/gasto 250` o `/gasto 250 Tacos`")
+        return
+
+    description = parts[2].strip() if len(parts) > 2 else ""
+    category    = parts[3].strip() if len(parts) > 3 and parts[3] in CATS_FINANCE else "otro"
+
+    # Guardar en session para el flujo de botones
+    session["pending_expense"] = {
+        "amount":      amount,
+        "description": description,
+        "date":        date.today().isoformat(),
+        "category":    category,
+        "card":        "BBVA_Gold",
+    }
+
+    desc_str = f" — {description}" if description else ""
+
+    # Si ya tiene categoría válida → ir directo a tarjeta
+    if len(parts) > 3 and parts[3] in CATS_FINANCE:
+        _send_expense_confirmation(session["pending_expense"])
+    else:
+        # Pedir categoría con botones
+        _send_category_picker(f"💸 *${amount:.0f}*{desc_str}\n\n📂 ¿En qué categoría?")
 
 # ── Resumen del ciclo ─────────────────────────────────────────────────────────
 def handle_gastos_resumen():

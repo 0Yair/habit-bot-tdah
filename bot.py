@@ -78,8 +78,10 @@ _CB = {
     "fin_cats":          handle_gastos_por_categoria,
     "fin_registrar":     lambda: send_message(
         "💸 *Registrar gasto*\n\n"
-        "📸 Foto del ticket — mándala directo\n"
-        "`/gasto 250 comida_fuera BBVA_Gold Tacos`"
+        "📸 *Foto del ticket* — mándala directo\n\n"
+        "✏️ *Manual* — escribe monto y descripción:\n"
+        "`/gasto 250`\n"
+        "`/gasto 250 Tacos en el mercado`"
     ),
     "hab_progreso":      send_resumen,
     "hab_nuevo":         start_new_habit_flow,

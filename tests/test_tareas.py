@@ -1,7 +1,136 @@
 # tests/test_tareas.py
-"""Tests para tareas.py — se irán completando por tarea."""
-# conftest.py ya inyectó el shared falso; importar tareas aquí es seguro.
-# tareas.py no existe aún — este import fallará hasta el Task 3.
+import sys
+from datetime import date
+from unittest.mock import call
 
-def test_placeholder():
-    assert True
+import tareas
+from tareas import _sort_tasks, _format_task_line, _save_task, _complete_task
+
+# Referencia al mock de shared para configurar retornos
+shared = sys.modules["shared"]
+
+
+# ── _sort_tasks ────────────────────────────────────────────────────────────────
+
+def test_sort_tasks_urgent_due_first():
+    """Tarea que vence hoy va antes que tarea sin fecha."""
+    today = date(2026, 4, 30)
+    shared.now_mx.return_value.date.return_value = today
+
+    urgent   = {"id": 1, "title": "A", "due_date": "2026-04-30", "priority": "baja", "created_at": ""}
+    no_date  = {"id": 2, "title": "B", "due_date": None,         "priority": "alta", "created_at": ""}
+
+    result = _sort_tasks([no_date, urgent])
+    assert result[0]["id"] == 1  # urgent primero
+
+
+def test_sort_tasks_priority_tiebreak():
+    """Sin due_date, alta prioridad antes que media."""
+    today = date(2026, 4, 30)
+    shared.now_mx.return_value.date.return_value = today
+
+    alta  = {"id": 1, "title": "A", "due_date": None, "priority": "alta",  "created_at": "2026-04-01"}
+    media = {"id": 2, "title": "B", "due_date": None, "priority": "media", "created_at": "2026-04-01"}
+    baja  = {"id": 3, "title": "C", "due_date": None, "priority": "baja",  "created_at": "2026-04-01"}
+
+    result = _sort_tasks([baja, media, alta])
+    assert [t["id"] for t in result] == [1, 2, 3]
+
+
+def test_sort_tasks_overdue_floats_up():
+    """Tarea vencida (días negativos) aparece antes que tarea que vence mañana."""
+    today = date(2026, 4, 30)
+    shared.now_mx.return_value.date.return_value = today
+
+    overdue   = {"id": 1, "title": "A", "due_date": "2026-04-28", "priority": "baja",  "created_at": ""}
+    tomorrow  = {"id": 2, "title": "B", "due_date": "2026-05-01", "priority": "alta",  "created_at": ""}
+
+    result = _sort_tasks([tomorrow, overdue])
+    assert result[0]["id"] == 1
+
+
+# ── _format_task_line ──────────────────────────────────────────────────────────
+
+def test_format_task_due_today():
+    today = date(2026, 4, 30)
+    shared.now_mx.return_value.date.return_value = today
+    task = {"title": "Llamar dentista", "priority": "alta", "due_date": "2026-04-30", "recurrence": None}
+    line = _format_task_line(task)
+    assert "🔴" in line
+    assert "Llamar dentista" in line
+    assert "hoy" in line
+
+
+def test_format_task_no_date_weekly():
+    shared.now_mx.return_value.date.return_value = date(2026, 4, 30)
+    task = {"title": "Caso de estudio", "priority": "media", "due_date": None, "recurrence": "weekly"}
+    line = _format_task_line(task)
+    assert "🟡" in line
+    assert "semanal" in line
+
+
+def test_format_task_no_date_no_recurrence():
+    shared.now_mx.return_value.date.return_value = date(2026, 4, 30)
+    task = {"title": "Revisar notas", "priority": "baja", "due_date": None, "recurrence": None}
+    line = _format_task_line(task)
+    assert "🟢" in line
+    assert "Revisar notas" in line
+
+
+# ── _save_task ─────────────────────────────────────────────────────────────────
+
+def test_save_task_calls_sb_post():
+    shared.reset_mock()
+    # Note: tareas.session is bound to the original shared.session dict at import time.
+    # Never reassign shared.session — mutate tareas.session directly instead.
+    tareas.session.clear()
+    shared.now_mx.return_value.isoformat.return_value = "2026-04-30T09:00:00-06:00"
+
+    _save_task({"title": "Test tarea", "priority": "media"})
+
+    shared.sb_post.assert_called_once()
+    args = shared.sb_post.call_args
+    assert args[0][0] == "tasks"
+    assert args[0][1]["title"] == "Test tarea"
+    assert args[0][1]["status"] == "pending"
+
+
+# ── _complete_task ─────────────────────────────────────────────────────────────
+
+def test_complete_task_marks_done():
+    shared.reset_mock()
+    shared.sb_get.return_value = [{
+        "id": 42, "title": "T", "status": "pending",
+        "recurrence": None, "due_date": None,
+        "priority": "media", "category": "otro",
+        "follow_up_days": 4, "parent_id": None, "is_project": False,
+    }]
+    shared.now_mx.return_value.isoformat.return_value = "2026-04-30T09:00:00-06:00"
+
+    _complete_task(42)
+
+    shared.sb_patch.assert_called_once_with(
+        "tasks", "id=eq.42",
+        {"status": "done", "done_at": "2026-04-30T09:00:00-06:00"}
+    )
+    shared.sb_post.assert_not_called()  # no recurrencia
+
+
+def test_complete_task_weekly_creates_next():
+    shared.reset_mock()
+    shared.sb_get.return_value = [{
+        "id": 7, "title": "Caso de estudio", "status": "pending",
+        "recurrence": "weekly", "due_date": None,
+        "priority": "alta", "category": "trabajo",
+        "follow_up_days": 7, "parent_id": None, "is_project": False,
+    }]
+    shared.now_mx.return_value.isoformat.return_value = "2026-04-30T09:00:00-06:00"
+
+    _complete_task(7)
+
+    shared.sb_patch.assert_called_once()  # marca done
+    shared.sb_post.assert_called_once()   # crea siguiente
+    new_task = shared.sb_post.call_args[0][1]
+    assert new_task["title"] == "Caso de estudio"
+    assert new_task["recurrence"] == "weekly"
+    assert new_task["status"] == "pending"

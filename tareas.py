@@ -481,3 +481,99 @@ def _show_completed_tasks():
     for t in tasks:
         lines.append(f"• {t.get('title', '')}")
     send_message("\n".join(lines))
+
+
+# ── Scheduler ─────────────────────────────────────────────────────────────────
+def send_daily_task_reminder():
+    """9:10 AM — manda la tarea más urgente del día. Silencio si no hay nada."""
+    tasks = [t for t in _sort_tasks(_get_pending_tasks()) if not t.get("is_project")]
+    if not tasks:
+        return
+    t = tasks[0]
+    send_message(
+        f"📌 *Tu tarea más importante hoy*\n\n{_format_task_line(t)}",
+        {"inline_keyboard": [[
+            {"text": "✅ Hecha",     "callback_data": f"task_done_{t['id']}"},
+            {"text": "⏭️ Mañana",   "callback_data": f"task_snooze_{t['id']}"},
+            {"text": "🗑️ Eliminar", "callback_data": f"task_del_{t['id']}"},
+        ]]},
+    )
+    sb_patch("tasks", f"id=eq.{t['id']}", {"last_reminded_at": now_mx().isoformat()})
+
+
+def send_deadline_alert():
+    """7:35 AM — avisa sobre tareas que vencen en ≤2 días. Silencio si no hay."""
+    today  = now_mx().date()
+    urgent = [
+        t for t in _get_pending_tasks()
+        if t.get("due_date")
+        and 0 <= (date.fromisoformat(t["due_date"]) - today).days <= 2
+    ]
+    if not urgent:
+        return
+    for t in urgent:
+        days_left = (date.fromisoformat(t["due_date"]) - today).days
+        label = "hoy" if days_left == 0 else "mañana" if days_left == 1 else "en 2 días"
+        send_message(
+            f"⚠️ *Tarea vence {label}*\n\n{_format_task_line(t)}",
+            {"inline_keyboard": [[
+                {"text": "✅ Hecha",   "callback_data": f"task_done_{t['id']}"},
+                {"text": "🗑️ Borrar", "callback_data": f"task_del_{t['id']}"},
+            ]]},
+        )
+
+
+def check_stale_tasks():
+    """21:15 PM — pregunta por la tarea más estancada (≥follow_up_days sin mover)."""
+    today = now_mx().date()
+    stale = []
+    for t in _get_pending_tasks():
+        if t.get("is_project"):
+            continue
+        last = t.get("last_reminded_at") or t.get("created_at") or ""
+        if not last:
+            continue
+        try:
+            days_idle = (today - date.fromisoformat(last[:10])).days
+            if days_idle >= t.get("follow_up_days", 4):
+                stale.append((days_idle, t))
+        except Exception:
+            pass
+    if not stale:
+        return
+    days_idle, t = max(stale, key=lambda x: x[0])  # la más estancada
+    send_message(
+        f"👀 *¿Qué pasó con esta tarea?*\n\n{_format_task_line(t)}\n"
+        f"_(Sin mover hace {days_idle}d)_",
+        {"inline_keyboard": [[
+            {"text": "⏳ Sigue pendiente", "callback_data": f"task_snooze_{t['id']}"},
+            {"text": "✅ Ya la hice",      "callback_data": f"task_done_{t['id']}"},
+            {"text": "🗑️ Eliminar",       "callback_data": f"task_del_{t['id']}"},
+        ]]},
+    )
+
+
+def send_weekly_task_summary():
+    """Lunes 9:15 AM — resumen semanal de tareas."""
+    tasks    = [t for t in _get_pending_tasks() if not t.get("is_project")]
+    today    = now_mx().date()
+    week_ago = today - timedelta(days=7)
+    done     = sb_get("tasks", f"status=eq.done&done_at=gte.{week_ago.isoformat()}T00:00:00&select=id") or []
+    urgent   = [
+        t for t in tasks
+        if t.get("due_date")
+        and 0 <= (date.fromisoformat(t["due_date"]) - today).days <= 7
+    ]
+    counts = {"alta": 0, "media": 0, "baja": 0}
+    for t in tasks:
+        p = t.get("priority", "media")
+        counts[p] = counts.get(p, 0) + 1
+
+    lines = ["📋 *Resumen semanal de tareas*\n",
+             f"✅ Completadas esta semana: {len(done)}",
+             f"⏳ Pendientes: {len(tasks)}"]
+    if tasks:
+        lines.append(f"  🔴 Alta: {counts['alta']}  🟡 Media: {counts['media']}  🟢 Baja: {counts['baja']}")
+    if urgent:
+        lines.append(f"📅 Vencen esta semana: {len(urgent)}")
+    send_message("\n".join(lines))

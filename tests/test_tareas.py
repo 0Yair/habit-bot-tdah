@@ -134,3 +134,46 @@ def test_complete_task_weekly_creates_next():
     assert new_task["title"] == "Caso de estudio"
     assert new_task["recurrence"] == "weekly"
     assert new_task["status"] == "pending"
+
+
+# ── _is_task_intent ────────────────────────────────────────────────────────────
+
+def test_is_task_intent_returns_true_for_task():
+    shared.ai_call.return_value = "task"
+    assert tareas._is_task_intent("pendiente hablar con mamá") is True
+
+
+def test_is_task_intent_returns_false_for_question():
+    shared.ai_call.return_value = "question"
+    assert tareas._is_task_intent("cuánto gasté esta semana") is False
+
+
+def test_is_task_intent_returns_false_on_ai_exception():
+    shared.ai_call.side_effect = Exception("timeout")
+    result = tareas._is_task_intent("algo")
+    shared.ai_call.side_effect = None  # limpiar para tests posteriores
+    assert result is False
+
+
+# ── _ai_parse_task ─────────────────────────────────────────────────────────────
+
+def test_ai_parse_task_valid_json():
+    shared.ai_call.return_value = (
+        '{"title":"Hablar con Diego","category":"personas",'
+        '"priority":"alta","due_date":"2026-05-01","recurrence":null}'
+    )
+    shared.now_mx.return_value.date.return_value = date(2026, 4, 30)
+    result = tareas._ai_parse_task("hablar con Diego antes del viernes")
+    assert result["title"] == "Hablar con Diego"
+    assert result["priority"] == "alta"
+    assert result["due_date"] == "2026-05-01"
+    assert result["recurrence"] is None
+
+
+def test_ai_parse_task_fallback_on_bad_json():
+    shared.ai_call.return_value = "no es json"
+    shared.now_mx.return_value.date.return_value = date(2026, 4, 30)
+    result = tareas._ai_parse_task("tarea sin parsear")
+    assert result["title"] == "tarea sin parsear"
+    assert result["category"] == "otro"
+    assert result["priority"] == "media"

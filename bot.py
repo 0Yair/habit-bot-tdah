@@ -29,6 +29,11 @@ from comida import (
     handle_meal_setup_callback, handle_meal_setup_text,
     show_today_plan,
 )
+from tareas import (
+    handle_tareas_callback, handle_tareas_flow_text, handle_tareas_text,
+    send_daily_task_reminder, send_deadline_alert, send_weekly_task_summary,
+    check_stale_tasks, show_tareas_menu,
+)
 
 # ── Instancia única (evita duplicados cuando corre más de un proceso) ──────────
 def _ensure_single_instance():
@@ -50,7 +55,8 @@ def send_menu():
     send_message(f"{saludo}, Yair", {"inline_keyboard": [
         [{"text": "💰 Finanzas", "callback_data": "menu_finanzas"},
          {"text": "🏃 Hábitos",  "callback_data": "menu_habitos"}],
-        [{"text": "👥 Personas", "callback_data": "menu_personas"}],
+        [{"text": "📋 Tareas",   "callback_data": "menu_tareas"},
+         {"text": "👥 Personas", "callback_data": "menu_personas"}],
     ]})
 
 def send_habitos_submenu():
@@ -88,6 +94,7 @@ _CB = {
     "hab_recordatorios": show_reminders_menu,
     "hab_semanal":       send_weekly_analysis,
     "hab_plan_comida":   show_today_plan,
+    "menu_tareas":       show_tareas_menu,
 }
 
 # ── Diagnóstico ───────────────────────────────────────────────────────────────
@@ -157,6 +164,11 @@ def handle_callback(update):
     if handle_habit_callback(data, chat_id, message_id, original):
         return
 
+    # 3.5 Tareas
+    if data.startswith("tarea_") or data.startswith("task_"):
+        if handle_tareas_callback(data):
+            return
+
     # 4. Dispatch estático
     if data in _CB:
         _CB[data]()
@@ -196,6 +208,9 @@ def handle_message(update):
     if flow == "meal_plan_setup":
         handle_meal_setup_text(text)
         return
+    if flow == "task_add":
+        handle_tareas_flow_text(text)
+        return
 
     # Comandos del dict
     if text in _CMD:
@@ -213,6 +228,8 @@ def handle_message(update):
         send_message("🔍 Diagnosticando conexión Supabase...")
         send_message(test_supabase_connection())
     elif not text.startswith("/"):
+        if handle_tareas_text(text):
+            return
         send_message(ai_answer_question(text, get_all_state()))
 
 # ── Scheduler ─────────────────────────────────────────────────────────────────
@@ -289,6 +306,12 @@ def scheduler_loop():
 
                 if h == 21 and m == 0:  _trigger("ejercicio", "night")
                 if h == 22 and m == 0:  _trigger("comida", "night")
+
+                if h == 7  and m == 35: send_deadline_alert()
+                if h == 9  and m == 10: send_daily_task_reminder()
+                if h == 9  and m == 15 and now.weekday() == 0:
+                    send_weekly_task_summary()
+                if h == 21 and m == 15: check_stale_tasks()
 
                 # Recordatorios configurados en BD
                 for rem in _reminders():

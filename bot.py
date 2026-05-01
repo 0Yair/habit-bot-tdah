@@ -166,8 +166,8 @@ def handle_callback(update):
 
     # 3.5 Tareas
     if data.startswith("tarea_") or data.startswith("task_"):
-        handle_tareas_callback(data)
-        return
+        if handle_tareas_callback(data):
+            return
 
     # 4. Dispatch estático
     if data in _CB:

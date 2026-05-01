@@ -305,3 +305,179 @@ def _flow_confirm_and_save():
     session["flow"]       = None
     session["task_draft"] = {}
     send_message(f"✅ Tarea guardada: *{draft.get('title', '')}*")
+
+
+# ── Callbacks ─────────────────────────────────────────────────────────────────
+def handle_tareas_callback(data: str) -> bool:
+    """Maneja callbacks task_* y tarea_*. Devuelve True si fue consumido."""
+
+    # Menú de tareas
+    if data == "tarea_pending":
+        show_pending_tasks(); return True
+    if data == "tarea_projects":
+        show_projects(); return True
+    if data == "tarea_new":
+        start_task_add_flow(); return True
+    if data == "tarea_completed":
+        _show_completed_tasks(); return True
+
+    # Confirmación NL: guardar / cancelar
+    if data == "task_confirm":
+        task = session.pop("pending_task", None)
+        if task:
+            _save_task(task)
+            send_message(f"✅ Tarea guardada: *{task.get('title', '')}*")
+        return True
+    if data == "task_cancel":
+        session.pop("pending_task", None)
+        send_message("❌ Cancelado.")
+        return True
+
+    # Confirmación NL: editar prioridad
+    if data == "task_edit_prio":
+        send_message("🎯 *Elige prioridad:*", {"inline_keyboard": [[
+            {"text": "🔴 Alta",  "callback_data": "task_setprio_alta"},
+            {"text": "🟡 Media", "callback_data": "task_setprio_media"},
+            {"text": "🟢 Baja",  "callback_data": "task_setprio_baja"},
+        ]]})
+        return True
+    if data == "task_edit_cat":
+        items = list(CAT_LABELS.items())
+        rows  = []
+        for i in range(0, len(items), 2):
+            row = [{"text": items[i][1], "callback_data": f"task_setcat_{items[i][0]}"}]
+            if i + 1 < len(items):
+                row.append({"text": items[i+1][1], "callback_data": f"task_setcat_{items[i+1][0]}"})
+            rows.append(row)
+        send_message("📂 *Elige categoría:*", {"inline_keyboard": rows})
+        return True
+    if data.startswith("task_setprio_"):
+        prio = data[len("task_setprio_"):]
+        if session.get("pending_task"):
+            session["pending_task"]["priority"] = prio
+            _send_task_confirmation(session["pending_task"])
+        return True
+    if data.startswith("task_setcat_"):
+        cat = data[len("task_setcat_"):]
+        if session.get("pending_task"):
+            session["pending_task"]["category"] = cat
+            _send_task_confirmation(session["pending_task"])
+        return True
+
+    # Flujo guiado — categoría
+    if data.startswith("task_cat_"):
+        session.setdefault("task_draft", {})["category"] = data[len("task_cat_"):]
+        session["task_step"] = "priority"
+        _ask_priority()
+        return True
+    # Flujo guiado — prioridad
+    if data.startswith("task_prio_"):
+        session.setdefault("task_draft", {})["priority"] = data[len("task_prio_"):]
+        session["task_step"] = "has_due_date"
+        _ask_has_due_date()
+        return True
+    # Flujo guiado — ¿tiene fecha?
+    if data == "task_hasdate_si":
+        session["task_step"] = "due_date"
+        send_message("📅 ¿Para cuándo? Escribe la fecha:\n_(ej: viernes, 15 mayo, 2026-08-31)_")
+        return True
+    if data == "task_hasdate_no":
+        session.setdefault("task_draft", {})["due_date"] = None
+        session["task_step"] = "recurrence"
+        _ask_recurrence()
+        return True
+    # Flujo guiado — recurrencia
+    if data.startswith("task_rec_"):
+        rec = data[len("task_rec_"):]
+        session.setdefault("task_draft", {})["recurrence"] = None if rec == "none" else rec
+        session["task_step"] = "project"
+        _ask_project()
+        return True
+    # Flujo guiado — proyecto padre
+    if data.startswith("task_parent_"):
+        parent = data[len("task_parent_"):]
+        session.setdefault("task_draft", {})["parent_id"] = None if parent == "none" else int(parent)
+        _flow_confirm_and_save()
+        return True
+    # Flujo guiado — cancelar
+    if data == "task_flow_cancel":
+        session["flow"]       = None
+        session["task_draft"] = {}
+        send_message("❌ Cancelado.")
+        return True
+
+    # Acciones sobre tareas existentes
+    if data.startswith("task_done_"):
+        _complete_task(int(data[len("task_done_"):]))
+        send_message("✅ ¡Tarea completada!")
+        return True
+    if data.startswith("task_snooze_"):
+        task_id  = int(data[len("task_snooze_"):])
+        tomorrow = (now_mx().date() + timedelta(days=1)).isoformat()
+        sb_patch("tasks", f"id=eq.{task_id}", {"last_reminded_at": f"{tomorrow}T00:00:00"})
+        send_message("⏭️ Te recuerdo mañana.")
+        return True
+    if data.startswith("task_del_"):
+        task_id = int(data[len("task_del_"):])
+        sb_patch("tasks", f"id=eq.{task_id}",
+                 {"status": "done", "done_at": now_mx().isoformat()})
+        send_message("🗑️ Tarea eliminada.")
+        return True
+
+    return False
+
+
+# ── Vistas ────────────────────────────────────────────────────────────────────
+def show_tareas_menu():
+    send_message("📋 *Tareas*", {"inline_keyboard": [
+        [{"text": "📋 Ver pendientes", "callback_data": "tarea_pending"},
+         {"text": "🗂️ Proyectos",     "callback_data": "tarea_projects"}],
+        [{"text": "➕ Nueva tarea",    "callback_data": "tarea_new"},
+         {"text": "✅ Completadas",    "callback_data": "tarea_completed"}],
+    ]})
+
+
+def show_pending_tasks():
+    tasks = [t for t in _sort_tasks(_get_pending_tasks()) if not t.get("is_project")]
+    if not tasks:
+        send_message("📋 Sin tareas pendientes. ¡Bien hecho! 🎉")
+        return
+    lines    = [f"📋 *Pendientes ({len(tasks)})*\n"]
+    kbd_rows = []
+    for i, t in enumerate(tasks[:8], 1):
+        lines.append(f"{i}. {_format_task_line(t)}")
+        kbd_rows.append([
+            {"text": f"✅ {i}", "callback_data": f"task_done_{t['id']}"},
+            {"text": f"⏭️ {i}", "callback_data": f"task_snooze_{t['id']}"},
+            {"text": f"🗑️ {i}", "callback_data": f"task_del_{t['id']}"},
+        ])
+    send_message("\n".join(lines), {"inline_keyboard": kbd_rows})
+
+
+def show_projects():
+    projects = _get_projects()
+    if not projects:
+        send_message(
+            "🗂️ Sin proyectos activos.\n\n"
+            "Para crear uno, agrégalo como tarea y márcalo como proyecto."
+        )
+        return
+    lines = ["🗂️ *Proyectos activos*\n"]
+    for p in projects:
+        n   = len(sb_get("tasks", f"parent_id=eq.{p['id']}&status=eq.pending&select=id") or [])
+        due = f" · {p['due_date']}" if p.get("due_date") else ""
+        s   = "s" if n != 1 else ""
+        lines.append(f"📁 *{p['title']}*{due} · {n} pendiente{s}")
+    send_message("\n".join(lines))
+
+
+def _show_completed_tasks():
+    week_ago = (now_mx().date() - timedelta(days=7)).isoformat()
+    tasks    = sb_get("tasks", f"status=eq.done&done_at=gte.{week_ago}T00:00:00&select=title,done_at") or []
+    if not tasks:
+        send_message("✅ Sin tareas completadas esta semana.")
+        return
+    lines = [f"✅ *Completadas esta semana ({len(tasks)})*\n"]
+    for t in tasks:
+        lines.append(f"• {t.get('title', '')}")
+    send_message("\n".join(lines))

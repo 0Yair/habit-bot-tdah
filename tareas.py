@@ -220,3 +220,88 @@ def _send_task_confirmation(task: dict):
              {"text": "📂 Cambiar categoría", "callback_data": "task_edit_cat"}],
         ]},
     )
+
+
+# ── Flujo guiado por botones ──────────────────────────────────────────────────
+def start_task_add_flow():
+    session["flow"]       = "task_add"
+    session["task_draft"] = {}
+    session["task_step"]  = "title"
+    send_message(
+        "➕ *Nueva tarea*\n\nEscribe el título:",
+        {"inline_keyboard": [[{"text": "❌ Cancelar", "callback_data": "task_flow_cancel"}]]},
+    )
+
+
+def handle_tareas_flow_text(text: str) -> bool:
+    """Procesa texto durante el flujo guiado. Devuelve True si fue consumido."""
+    if session.get("flow") != "task_add":
+        return False
+    step  = session.get("task_step")
+    draft = session.setdefault("task_draft", {})
+
+    if step == "title":
+        draft["title"]       = text.strip()
+        session["task_step"] = "category"
+        _ask_category()
+        return True
+    if step == "due_date":
+        draft["due_date"]    = _parse_date(text.strip())
+        session["task_step"] = "recurrence"
+        _ask_recurrence()
+        return True
+    return False
+
+
+def _ask_category():
+    send_message("📂 *Categoría:*", {"inline_keyboard": [
+        [{"text": "💼 Trabajo",    "callback_data": "task_cat_trabajo"},
+         {"text": "👥 Personas",   "callback_data": "task_cat_personas"}],
+        [{"text": "🧘 Meditación", "callback_data": "task_cat_meditacion"},
+         {"text": "❤️ Salud",      "callback_data": "task_cat_salud"}],
+        [{"text": "📌 Otro",       "callback_data": "task_cat_otro"}],
+        [{"text": "❌ Cancelar",   "callback_data": "task_flow_cancel"}],
+    ]})
+
+
+def _ask_priority():
+    send_message("🎯 *Prioridad:*", {"inline_keyboard": [
+        [{"text": "🔴 Alta",    "callback_data": "task_prio_alta"},
+         {"text": "🟡 Media",   "callback_data": "task_prio_media"},
+         {"text": "🟢 Baja",    "callback_data": "task_prio_baja"}],
+        [{"text": "❌ Cancelar","callback_data": "task_flow_cancel"}],
+    ]})
+
+
+def _ask_has_due_date():
+    send_message("📅 *¿Tiene fecha límite?*", {"inline_keyboard": [
+        [{"text": "Sí", "callback_data": "task_hasdate_si"},
+         {"text": "No", "callback_data": "task_hasdate_no"}],
+        [{"text": "❌ Cancelar", "callback_data": "task_flow_cancel"}],
+    ]})
+
+
+def _ask_recurrence():
+    send_message("🔁 *¿Se repite?*", {"inline_keyboard": [
+        [{"text": "No se repite",   "callback_data": "task_rec_none"}],
+        [{"text": "🔁 Cada semana", "callback_data": "task_rec_weekly"},
+         {"text": "🔁 Cada mes",    "callback_data": "task_rec_monthly"}],
+        [{"text": "❌ Cancelar",    "callback_data": "task_flow_cancel"}],
+    ]})
+
+
+def _ask_project():
+    projects = _get_projects()
+    rows = [[{"text": "Sin proyecto", "callback_data": "task_parent_none"}]]
+    for p in projects[:5]:
+        rows.append([{"text": f"📁 {p['title']}", "callback_data": f"task_parent_{p['id']}"}])
+    rows.append([{"text": "❌ Cancelar", "callback_data": "task_flow_cancel"}])
+    send_message("📁 *¿Es sub-tarea de un proyecto?*", {"inline_keyboard": rows})
+
+
+def _flow_confirm_and_save():
+    draft = session.get("task_draft", {})
+    _save_task(draft)
+    session["flow"]       = None
+    session["task_draft"] = {}
+    send_message(f"✅ Tarea guardada: *{draft.get('title', '')}*")

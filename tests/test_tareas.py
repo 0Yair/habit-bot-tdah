@@ -177,3 +177,36 @@ def test_ai_parse_task_fallback_on_bad_json():
     assert result["title"] == "tarea sin parsear"
     assert result["category"] == "otro"
     assert result["priority"] == "media"
+
+
+# ── handle_tareas_text ─────────────────────────────────────────────────────────
+
+def test_handle_tareas_text_task_intent_saves_to_session():
+    shared.reset_mock()
+    # Mutate tareas.session directly — do NOT reassign shared.session,
+    # because tareas.session is bound to the original dict at import time.
+    tareas.session.clear()
+    tareas.session.update({"flow": None, "pending_task": None})
+    shared.ai_call.side_effect = [
+        "task",           # _is_task_intent
+        '{"title":"Hacer ejercicio","category":"salud","priority":"alta",'
+        '"due_date":null,"recurrence":"weekly"}',  # _ai_parse_task
+    ]
+    shared.now_mx.return_value.date.return_value = date(2026, 4, 30)
+    shared.now_mx.return_value.isoformat.return_value = "2026-04-30T09:00:00"
+
+    result = tareas.handle_tareas_text("ejercicio todos los días")
+
+    assert result is True
+    assert tareas.session["pending_task"]["title"] == "Hacer ejercicio"
+    shared.send_message.assert_called_once()
+
+
+def test_handle_tareas_text_question_returns_false():
+    shared.reset_mock()
+    shared.ai_call.return_value = "question"
+
+    result = tareas.handle_tareas_text("cuánto gasté esta semana")
+
+    assert result is False
+    shared.send_message.assert_not_called()

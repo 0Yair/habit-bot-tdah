@@ -186,3 +186,37 @@ def _parse_date(text: str):
     except Exception:
         pass
     return None
+
+
+# ── Flujo por texto libre ─────────────────────────────────────────────────────
+def handle_tareas_text(text: str) -> bool:
+    """Devuelve True si detectó intención de tarea y mostró confirmación."""
+    if not _is_task_intent(text):
+        return False
+    task = _ai_parse_task(text)
+    session["pending_task"] = task
+    _send_task_confirmation(task)
+    return True
+
+
+def _send_task_confirmation(task: dict):
+    cat       = CAT_LABELS.get(task.get("category", "otro"), "📌 Otro")
+    prio      = PRIO_ICONS.get(task.get("priority", "media"), "🟡")
+    prio_name = task.get("priority", "media").capitalize()
+    parts     = [cat, f"{prio} {prio_name}"]
+    if task.get("due_date"):
+        parts.append(f"📅 {task['due_date']}")
+    if task.get("recurrence") == "weekly":
+        parts.append("🔁 Semanal")
+    elif task.get("recurrence") == "monthly":
+        parts.append("🔁 Mensual")
+    meta = "  |  ".join(parts)
+    send_message(
+        f"📌 *Nueva tarea detectada*\n\n📝 {task.get('title', '')}\n{meta}",
+        {"inline_keyboard": [
+            [{"text": "✅ Guardar",          "callback_data": "task_confirm"},
+             {"text": "❌ Cancelar",          "callback_data": "task_cancel"}],
+            [{"text": "✏️ Cambiar prioridad", "callback_data": "task_edit_prio"},
+             {"text": "📂 Cambiar categoría", "callback_data": "task_edit_cat"}],
+        ]},
+    )
